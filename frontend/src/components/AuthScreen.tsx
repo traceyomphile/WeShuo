@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import type { SubmitEvent } from 'react'
-import { ArrowLeft, Eye, EyeOff, LockKeyhole, UserRound } from 'lucide-react'
 import { api } from '../api'
 import { errorMessage } from '../utils/errors'
 import type { AuthUser } from '../types'
@@ -10,11 +9,15 @@ interface Props { onAuthenticated: (token: string, user: AuthUser) => void }
 export default function AuthScreen({ onAuthenticated }: Props) {
   const [ready, setReady] = useState(false)
   const [mode, setMode] = useState<'login' | 'signup'>('login')
-  const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
 
-  useEffect(() => { const id = window.setTimeout(() => setReady(true), 2600); return () => clearTimeout(id) }, [])
+  useEffect(() => { const id = window.setTimeout(() => setReady(true), 4000); return () => clearTimeout(id) }, [])
+  useEffect(() => {
+    if (!notice || notice.type === 'success') return
+    const id = window.setTimeout(() => setNotice(null), 2200)
+    return () => clearTimeout(id)
+  }, [notice])
 
   async function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -48,24 +51,22 @@ export default function AuthScreen({ onAuthenticated }: Props) {
       </section>
 
       <section className="auth-panel">
-        <main className="auth-card">
-          {mode === 'signup' && <button className="back-link" onClick={() => { setMode('login'); setNotice(null) }}><ArrowLeft size={17} /> Back</button>}
-          <p className="eyebrow">SECURE CONNECTION</p>
-          <h2>{mode === 'login' ? 'LOGIN' : 'SIGN UP'}</h2>
-          <p className="auth-copy">{mode === 'login' ? 'Continue your conversations.' : 'Create your W3SHUŌ identity.'}</p>
-
-          <form onSubmit={submit}>
+        <main className="auth-card active">
+          <h2 key={mode} className="auth-title">{mode === 'login' ? 'LOGIN' : 'SIGN UP'}</h2>
+          <form key={mode} className="auth-form" onSubmit={submit}>
             <label htmlFor="username">Username</label>
-            <div className="field"><UserRound size={18} /><input id="username" name="username" placeholder="username" minLength={3} maxLength={30} autoComplete="username" required /></div>
+            <input id="username" name="username" placeholder={mode === 'login' ? 'username' : 'enter username'} minLength={3} maxLength={30} autoComplete="username" required />
             <label htmlFor="password">Password</label>
-            <div className="field"><LockKeyhole size={18} /><input id="password" name="password" type={showPassword ? 'text' : 'password'} placeholder="••••••••" minLength={8} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required /><button type="button" aria-label="Toggle password visibility" onClick={() => setShowPassword(value => !value)}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>
-            {mode === 'signup' && <><label htmlFor="confirmPassword">Confirm password</label><div className="field"><LockKeyhole size={18} /><input id="confirmPassword" name="confirmPassword" type={showPassword ? 'text' : 'password'} placeholder="••••••••" minLength={8} autoComplete="new-password" required /></div><small className="password-hint">Use uppercase, lowercase, a number and a special character.</small></>}
-            {notice && <div role="alert" className={`form-notice ${notice.type}`}>{notice.text}</div>}
-            <button className="primary-button" disabled={busy}>{busy ? 'CONNECTING…' : mode === 'login' ? 'LOGIN' : 'CREATE ACCOUNT'}</button>
+            <input id="password" name="password" type="password" placeholder="*********" minLength={8} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required />
+            {mode === 'signup' && <><label htmlFor="confirmPassword">Confirm Password</label><input id="confirmPassword" name="confirmPassword" type="password" placeholder="confirm password" minLength={8} autoComplete="new-password" required /></>}
+            <button type="submit" disabled={busy}>{busy ? 'CONNECTING…' : mode === 'login' ? 'LOGIN' : 'REGISTER'}</button>
+            <button type="button" onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setNotice(null) }}>{mode === 'login' ? 'SIGNUP' : 'BACK TO LOGIN'}</button>
           </form>
-          {mode === 'login' && <button className="secondary-button" onClick={() => { setMode('signup'); setNotice(null) }}>CREATE AN ACCOUNT</button>}
         </main>
       </section>
+      <div className={`popup-overlay ${notice ? 'show' : ''}`} role="alert">
+        <div className="popup-box"><h2>{notice?.type === 'success' ? 'Success' : 'Unable to continue'}</h2><p>{notice?.text}</p></div>
+      </div>
     </div>
   )
 }
