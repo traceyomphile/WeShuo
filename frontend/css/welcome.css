@@ -1,0 +1,427 @@
+/* Global Reset */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    letter-spacing: 1px;
+}
+
+:root {
+    --bg: linear-gradient(135deg, #000000, #0a1a3f);
+    --line: rgb(15, 27, 123);
+    --blue: rgb(113, 124, 205);
+    --white: #f4f6fb;
+    --muted: #8894aa;
+}
+
+body {
+    width: 100vw;
+    height: 100vh;
+    color: var(--blue);
+    font-family: Arial, Helvetica, sans-serif;
+    background: var(--bg);
+    overflow: hidden;
+    letter-spacing: 1px;
+}
+
+/* Default: small = vertical split*/
+.app {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+
+.panel {
+    width: 100vw;
+    overflow: hidden;
+    transition:
+        width 1.2s ease-in-out,
+        opacity 1s ease-in-out,
+        transform 1s ease-in-out;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 2rem;
+    container-type: inline-size;
+}
+
+/* Welcome starts full screen */
+.welcome-panel {
+    width: 100vw;
+    height: 100vh;
+    opacity: 1;
+    transform: translateY(0);
+    text-align: center;
+}
+
+/* Login panel starts hidden on the right, then fades/slides in */
+.login-panel {
+    width: 100vw;
+    height: 0;
+    opacity: 0;
+    transform: translateY(80px);
+    pointer-events: none;
+}
+
+.auth-panel {
+    width: 100vw;
+    height: 0;
+    opacity: 0;
+    transform: translateY(80px);
+    pointer-events: none;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* After 4 seconds: show half welcome + half login */
+body.show-login .welcome-panel {
+    height: 30vh;
+}
+
+body.show-login .auth-panel {
+    height: 70vh;
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+/* Bigger than 390x844 = horizontal split */
+@media (min-width: 391px) {
+    .app {
+        flex-direction: row;
+    }
+
+    .panel {
+        height: 100vh;
+    }
+
+    .welcome-panel {
+        width: 100vw;
+        height: 100vh;
+        transform: translateX(0);
+    }
+
+    .auth-panel {
+        width: 0;
+        height: 100vh;
+        opacity: 0;
+        transform: translateX(80px);
+        pointer-events: none;
+    }
+
+    body.show-login .welcome-panel {
+        width: 50vw;
+        height: 100vh;
+    }
+
+    body.show-login .auth-panel {
+        width: 50vw;
+        height: 100vh;
+        opacity: 1;
+        transform: translateX(0);
+        pointer-events: auto;
+    }
+}
+
+/* Welcome content shrinks/moves a bit when login appears */
+.hero {
+    width: 100%;
+    text-align: center;
+    transition: transform 1.2s ease, opacity 1.2s ease;
+}
+
+body.show-login .hero {
+    transform: scale(0.92);
+    opacity: 1;
+}
+
+.logo {
+    overflow: hidden;
+    white-space: nowrap;
+    border-right: 0px transparent;
+    width: 0;
+    animation: typing 2s steps(22, end) forwards;
+
+    font-size: 13vw;
+    font-weight: 900;
+    font-style: oblique;
+    letter-spacing: 1px;
+    margin-bottom: 0;
+    color: var(--muted);
+}
+
+.logo .zero {
+    font-size: 13vw;
+    font-weight: 900;
+    font-style: oblique;
+    color: var(--line);
+    letter-spacing: 1px;
+}
+
+.divider {
+    width: min(92%, 1280px);
+    height: 2px;
+    margin: 1rem auto 3rem;
+    background: linear-gradient(90deg, rgba(47,121,255,0.9), rgba(47,121,255,0.8));
+    box-shadow: 0 0 10px rgba(47, 121, 255, 0.35);
+    margin-bottom: 1rem;
+}
+
+.tagline {
+    font-style: italic;
+    opacity: 0;
+    transform: translateX(20px);
+    animation: fadeSlide 1s ease forwards;
+    animation-delay: 2s;
+
+    color: var(--muted);
+    font-size: 5vw;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    margin-bottom: 1.5rem;
+}
+
+.tagline .sep {
+    color: #6b778f;
+}
+
+/* When split happens, scale the text to the visible half */
+body.show-login .logo,
+body.show-login .logo .zero {
+    font-size: 15cqw;
+}
+
+body.show-login .tagline {
+    font-size: 8cqw;
+}
+
+.dots {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.8rem;
+}
+
+.dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--line);
+    opacity: 0;
+    margin-bottom: 0.5rem;
+    animation: pulse 1.3s infinite ease-in-out;
+    animation-delay: 3s;
+}
+
+.dot:nth-child(2) {
+    animation-delay: 3.2s;
+}
+
+.dot:nth-child(3) {
+    animation-delay: 3.4s;
+}
+
+@keyframes typing {
+    to {
+        width: 100%;
+    }
+}
+
+@keyframes fadeSlide {
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(0.7);
+        opacity: 0.2;
+    }
+
+    50% {
+        transform: scale(1.15);
+        opacity: 1;
+    }
+}
+
+.auth-container {
+    position: relative;
+    width: min(420px, 90%);
+    min-height: 480px;
+}
+
+.auth-card {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(30px);
+    transition: opacity 0.5s ease, transform 0.5s ease;
+    padding: 1.5rem;
+    border: 1px solid rgba(113, 124, 205, 0.35);
+    border-radius: 18px;
+    background: rgba(0, 0, 0, 0.22);
+    box-shadow: 0 0 24px rgba(47, 121, 255, 0.12);
+}
+
+.auth-card.active {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(0);
+}
+
+.login-wrapper {
+    width: min(420px, 90%);
+    padding: 1.5rem;
+    border: 1px solid rgba(113, 124, 205, 0.35);
+    border-radius: 18px;
+    background: rgba(0, 0, 0, 0.22);
+    box-shadow: 0 0 24px rgba(47, 121, 255, 0.12);
+}
+
+@media (max-width: 390px) {
+    .panel {
+        padding: 1rem;
+    }
+
+    .login-wrapper {
+        padding: 1.25rem;
+    }
+
+    .login-title {
+        font-size: clamp(1.8rem, 8vw, 3rem);
+    }
+}
+
+.auth-title {
+    overflow: hidden;
+    white-space: nowrap;
+    border-right: 1px solid transparent;
+    width: 0;
+    animation: loginTyping 1.4s steps(12, end) forwards;
+    animation-delay: 4s;
+
+    font-size: clamp(2.4rem, 6vw, 5rem);
+    font-weight: 900;
+    font-style: oblique;
+    letter-spacing: 1px;
+    margin-bottom: 1rem;
+    color: rgba(19, 83, 179, 0.715);
+}
+
+.auth-form label {
+    display: block;
+    margin-bottom: 0;
+    font-size: 1.1rem;
+    font-weight: bolder;
+    color: var(--blue);
+}
+
+.auth-form .input-group {
+    font-style: italic;
+    opacity: 0;
+    transform: translateX(20px);
+    animation: loginFadeSlide 0.9s ease forwards;
+    animation-delay: 4.45s;
+    margin-top: 0.5rem;
+}
+
+.auth-form input {
+    width: 100%;
+    padding: 12px;
+    border-radius: 6px;
+    border: 1px solid var(--muted);
+    background: linear-gradient(135deg, #000000, #0a1a3f);
+    color: var(--white);
+    margin-top: 0.8em;
+    margin-bottom: 1em;
+    outline: none;
+}
+
+.auth-form input::placeholder {
+    color: var(--muted);
+}
+
+.auth-form button {
+    display: block;
+    margin: 1em auto 0 auto;
+    background: var(--line);
+    color: var(--white);
+    padding: 12px 20px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    width: 100%;
+    font-weight: bold;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.auth-form button:hover {
+    transform: translateY(-1px);
+    opacity: 0.95;
+}
+
+@keyframes loginTyping {
+    to {
+        width: 100%;
+    }
+}
+
+@keyframes loginFadeSlide {
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.popup-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.35s ease;
+    z-index: 999;
+}
+
+.popup-overlay.show {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.popup-box {
+    min-width: 280px;
+    max-width: 90%;
+    padding: 1.5rem 2rem;
+    border-radius: 16px;
+    text-align: center;
+    background: linear-gradient(135deg, #000000, #0a1a3f);
+    border: 1px solid rgba(113, 124, 205, 0.35);
+    box-shadow: 0 0 24px rgba(47, 121, 255, 0.2);
+    color: var(--white);
+    transform: scale(0.9);
+    transition: transform 0.35s ease;
+}
+
+.popup-overlay.show .popup-box {
+    transform: scale(1);
+}
+
+.popup-box h2 {
+    margin-bottom: 0.5rem;
+    color: var(--blue);
+    font-size: 1.8rem;
+}
+
+.popup-box p {
+    color: var(--muted);
+    font-size: 1rem;
+}
