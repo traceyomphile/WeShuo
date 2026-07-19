@@ -1,0 +1,9 @@
+[project]
+name = "WeShuō"
+version = "1.0.0"
+description = "FastAPI backend for the WeShuō chat web application"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
