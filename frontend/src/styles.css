@@ -19,9 +19,11 @@
   --red: #ff4f64;
 
   /* Welcome-screen animation timing */
-  --logo-typing-duration: 2s;
+  --logo-typing-duration: 1.9s;
   --logo-typing-delay: 0.2s;
-  --content-reveal-delay: 2.2s;
+  --bubble-draw-duration: 1.2s;
+  --bubble-draw-delay: 2.25s;
+  --content-reveal-delay: 3.5s;
   --auth-typing-duration: 1.4s;
 }
 
@@ -140,8 +142,8 @@ textarea:focus-visible {
   transform: translateX(80px);
   flex: 0 0 auto;
   border-left: 1px solid rgba(113, 145, 255, 0.12);
-  background: rgba(2, 7, 15, 0.5);
-  backdrop-filter: blur(18px);
+  background: transparent;
+  backdrop-filter: none;
 }
 .auth-page.is-ready .welcome-panel {
   width: 50%;
@@ -160,25 +162,113 @@ textarea:focus-visible {
 .auth-page.is-ready .hero {
   transform: scale(0.84);
 }
+.welcome-mark {
+  width: min(90%, 900px, 118vh);
+  position: relative;
+  margin: 0 auto;
+  aspect-ratio: 1000 / 650;
+  container-type: inline-size;
+  transition: width 1.15s cubic-bezier(0.76, 0, 0.24, 1);
+}
+.auth-page.is-ready .welcome-mark {
+  width: min(72%, 520px, 62vh);
+}
+.auth-page.is-ready .welcome-logo {
+  width: max-content;
+  max-width: none;
+  left: 50%;
+  overflow: visible;
+  border-right-color: transparent;
+  font-size: 13cqw;
+  animation: none;
+  transform: translateX(-50%);
+}
+.welcome-bubble {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+.bubble-stroke {
+  fill: none;
+  stroke: #340e9e;
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  opacity: 0;
+  animation: bubbleDraw var(--bubble-draw-duration) ease-out var(--bubble-draw-delay) forwards;
+}
+.bubble-left {
+  animation-delay: calc(var(--bubble-draw-delay) + 0.08s);
+}
+.bubble-tail {
+  animation-delay: calc(var(--bubble-draw-delay) + 0.16s);
+}
 .welcome-logo {
   width: 0;
+  height: 1.12em;
+  display: flex;
+  align-items: center;
+  position: absolute;
+  left: 15.5%;
+  top: 39%;
   overflow: hidden;
-  margin: 0 auto;
-  color: #8a96aa;
+  margin: 0;
+  border-right: 3px solid #120f60;
+  color: #0d162f;
   white-space: nowrap;
   font:
-    italic 800 clamp(4rem, 12vw, 11rem)/0.95 "Space Grotesk",
+    500 clamp(3rem, 14.5cqw, 8.2rem)/1 "Space Grotesk",
     sans-serif;
-  letter-spacing: -0.08em;
-  border-right: 2px solid #2947c0;
+  letter-spacing: -0.075em;
+  -webkit-text-stroke: 0.023em #5b49ff;
+  text-shadow:
+    -0.054em 0 #db04bebe,
+    0 0 0.085em rgba(43, 16, 153, 0.623),
+    -0.054em 0 0.085em rgba(42, 10, 201, 0.596);
   animation:
-    welcomeTyping var(--logo-typing-duration) steps(12, end)
-      var(--logo-typing-delay) forwards,
-    typingCaret 0.75s step-end var(--logo-typing-delay) 1 forwards;
+    welcomeTyping var(--logo-typing-duration) steps(7, end) var(--logo-typing-delay) forwards,
+    logoCaret 0.48s step-end var(--logo-typing-delay) 5 forwards;
 }
-.welcome-logo .three {
-  color: #2947c0;
-  font-size: 1.12em;
+.logo-letters {
+  display: inline-block;
+}
+.logo-final-o {
+  width: 0.92em;
+  height: 1em;
+  display: inline-grid;
+  place-items: center;
+  position: relative;
+  flex: 0 0 auto;
+  margin-left: 0.03em;
+  -webkit-text-stroke: 0;
+  text-shadow: none;
+}
+.logo-o-glyph {
+  grid-area: 1 / 1;
+  color: #0d162f;
+  line-height: 1;
+  -webkit-text-stroke: 0.023em #5b49ff;
+  text-shadow:
+    -0.054em 0 #db04bebe,
+    0 0 0.085em rgba(43, 16, 153, 0.623),
+    -0.054em 0 0.085em rgba(42, 10, 201, 0.596);
+}
+.logo-final-o b {
+  grid-area: 1 / 1;
+  z-index: 1;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.34em;
+  font-style: normal;
+  font-weight: 700;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  -webkit-text-stroke: 0.07em #7241ff;
+  text-shadow: none;
+  filter: drop-shadow(0 0 0.16em rgba(114, 65, 255, 0.85));
+  transform: translate(-0.04em, 0.1em);
 }
 .welcome-divider {
   height: 2px;
@@ -214,13 +304,13 @@ textarea:focus-visible {
   border-radius: 50%;
   background: #3455cd;
   opacity: 0;
-  animation: dotPulse 1.3s ease-in-out 2.4s infinite;
+  animation: dotPulse 1.3s ease-in-out 3.7s infinite;
 }
 .loading-dots i:nth-child(2) {
-  animation-delay: 2.56s;
+  animation-delay: 3.86s;
 }
 .loading-dots i:nth-child(3) {
-  animation-delay: 2.72s;
+  animation-delay: 4.02s;
 }
 .auth-card {
   width: min(420px, 90%);
@@ -282,7 +372,34 @@ textarea:focus-visible {
   border-color: #717ccd;
   box-shadow: 0 0 0 3px rgba(113, 124, 205, 0.12);
 }
-.auth-form button {
+.password-field {
+  position: relative;
+}
+.password-field input {
+  padding-right: 3.2rem;
+}
+.auth-form .password-toggle {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  position: absolute;
+  right: 0.35rem;
+  top: calc(50% - 0.1rem);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: #7d8ca6;
+  background: transparent;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+.auth-form .password-toggle:hover {
+  color: #c4d0e4;
+  background: rgba(91, 73, 255, 0.12);
+}
+.auth-form > button {
   width: 100%;
   display: block;
   margin: 1rem auto 0;
@@ -297,11 +414,11 @@ textarea:focus-visible {
     transform 0.2s ease,
     opacity 0.2s ease;
 }
-.auth-form button:hover:not(:disabled) {
+.auth-form > button:hover:not(:disabled) {
   transform: translateY(-1px);
   opacity: 0.95;
 }
-.auth-form button:disabled {
+.auth-form > button:disabled {
   opacity: 0.55;
   cursor: wait;
 }
@@ -365,10 +482,34 @@ textarea:focus-visible {
   color: #8894aa;
 }
 
-/* Types W3SHUŌ from left to right. */
+/* Types the seven visible logo characters once from left to right. */
 @keyframes welcomeTyping {
   to {
-    width: 100%;
+    width: 70%;
+  }
+}
+
+@keyframes logoCaret {
+  0%,
+  100% {
+    border-right-color: transparent;
+  }
+  50% {
+    border-right-color: #0093f5;
+  }
+}
+
+@keyframes bubbleDraw {
+  0% {
+    opacity: 0;
+    stroke-dashoffset: 1;
+  }
+  5% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    stroke-dashoffset: 0;
   }
 }
 
@@ -461,8 +602,8 @@ textarea:focus-visible {
   flex: 0 0 auto;
   border: 1px solid #284578;
   border-radius: 13px;
-  color: #9ba9bc;
-  background: #0a172a;
+  color: #6f90c0;
+  background: #0a172a5d;
   font:
     italic 800 1rem "Space Grotesk",
     sans-serif;
@@ -1703,8 +1844,14 @@ i.online {
   .hero {
     padding: 1rem;
   }
+  .welcome-mark {
+    width: min(92%, 600px, 78vh);
+  }
+  .auth-page.is-ready .welcome-mark {
+    width: min(46%, 260px, 25vh);
+  }
   .welcome-logo {
-    font-size: clamp(3.1rem, 17vw, 7rem);
+    font-size: clamp(2.7rem, 14.5cqw, 5rem);
   }
   .hero > p {
     font-size: clamp(1rem, 5vw, 1.7rem);
