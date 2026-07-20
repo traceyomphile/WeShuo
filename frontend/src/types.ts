@@ -12,9 +12,19 @@ export interface User extends AuthUser {
 export interface Group {
   id: number
   name: string
+  description: string
   creator_id: number
+  profile_media_id: number | null
   created_at: string
   member_count: number
+  role: 'admin' | 'member'
+}
+
+export interface GroupMember extends User {
+  role: 'admin' | 'member'
+  membership_status: 'current' | 'past'
+  joined_at: string
+  left_at: string | null
 }
 
 export interface Message {
@@ -37,7 +47,16 @@ export interface MessageReceipt {
 
 export type ChatTarget =
   | { kind: 'direct'; id: number; name: string; online: boolean; lastSeen?: string | null }
-  | { kind: 'group'; id: number; name: string; memberCount: number; creatorId: number }
+  | {
+      kind: 'group'
+      id: number
+      name: string
+      description: string
+      memberCount: number
+      creatorId: number
+      profileMediaId: number | null
+      role: 'admin' | 'member'
+    }
 
 export type CallKind = 'audio' | 'video'
 

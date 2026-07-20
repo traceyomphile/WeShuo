@@ -22,6 +22,16 @@ class GroupCreate(BaseModel):
     members: list[str] = Field(default_factory=list, max_length=100)
 
 
+class GroupUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=3, max_length=60)
+    description: str | None = Field(default=None, max_length=500)
+    profile_media_id: int | None = None
+
+
+class AdminUpdate(BaseModel):
+    is_admin: bool
+
+
 class GroupMessageCreate(BaseModel):
     content: str = Field(default="", max_length=4000)
     media_id: int | None = None

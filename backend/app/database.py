@@ -44,13 +44,18 @@ def initialise_database() -> None:
     CREATE TABLE IF NOT EXISTS groups (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        description TEXT NOT NULL DEFAULT '',
         creator_id INTEGER NOT NULL REFERENCES users(id),
+        profile_media_id INTEGER REFERENCES media(id),
         created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS group_members (
         group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         joined_at TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        left_at TEXT,
         PRIMARY KEY (group_id, user_id)
     );
     CREATE TABLE IF NOT EXISTS media (
@@ -90,4 +95,27 @@ def initialise_database() -> None:
             connection.execute("ALTER TABLE messages ADD COLUMN delivered_at TEXT")
         if "seen_at" not in message_columns:
             connection.execute("ALTER TABLE messages ADD COLUMN seen_at TEXT")
+        group_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(groups)").fetchall()
+        }
+        if "description" not in group_columns:
+            connection.execute("ALTER TABLE groups ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+        if "profile_media_id" not in group_columns:
+            connection.execute("ALTER TABLE groups ADD COLUMN profile_media_id INTEGER REFERENCES media(id)")
+        member_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(group_members)").fetchall()
+        }
+        if "role" not in member_columns:
+            connection.execute("ALTER TABLE group_members ADD COLUMN role TEXT NOT NULL DEFAULT 'member'")
+        if "is_active" not in member_columns:
+            connection.execute("ALTER TABLE group_members ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+        if "left_at" not in member_columns:
+            connection.execute("ALTER TABLE group_members ADD COLUMN left_at TEXT")
+        connection.execute(
+            """UPDATE group_members SET role='admin'
+               WHERE EXISTS (
+                 SELECT 1 FROM groups g
+                 WHERE g.id=group_members.group_id AND g.creator_id=group_members.user_id
+               )"""
+        )
         connection.commit()

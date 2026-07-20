@@ -1,4 +1,4 @@
-import type { AuthUser, Group, Message, User } from './types'
+import type { AuthUser, Group, GroupMember, Message, User } from './types'
 
 export const API_URL = (import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000').replace(/\/$/, '')
 
@@ -43,12 +43,18 @@ export const api = {
   createGroup: (token: string, name: string, members: string[]) => request<{ id: number }>('/api/groups', {
     method: 'POST', body: JSON.stringify({ name, members }),
   }, token),
-  groupMembers: (token: string, groupId: number) => request<User[]>(`/api/groups/${groupId}/members`, {}, token),
+  updateGroup: (token: string, groupId: number, changes: { name?: string; description?: string; profile_media_id?: number | null }) => request<Group>(`/api/groups/${groupId}`, {
+    method: 'PATCH', body: JSON.stringify(changes),
+  }, token),
+  groupMembers: (token: string, groupId: number) => request<GroupMember[]>(`/api/groups/${groupId}/members`, {}, token),
   addGroupMember: (token: string, groupId: number, username: string) => request<{ group_id: number; username: string; member_count: number }>(`/api/groups/${groupId}/members`, {
     method: 'POST', body: JSON.stringify({ username }),
   }, token),
   removeGroupMember: (token: string, groupId: number, username: string) => request<{ group_id: number; username: string; member_count: number }>(`/api/groups/${groupId}/members/${encodeURIComponent(username)}`, {
     method: 'DELETE',
+  }, token),
+  setGroupAdmin: (token: string, groupId: number, username: string, isAdmin: boolean) => request<{ group_id: number; username: string; role: 'admin' | 'member' }>(`/api/groups/${groupId}/members/${encodeURIComponent(username)}/admin`, {
+    method: 'PATCH', body: JSON.stringify({ is_admin: isAdmin }),
   }, token),
   directHistory: (token: string, username: string) => request<Message[]>(`/api/messages/direct/${encodeURIComponent(username)}`, {}, token),
   markDirectSeen: (token: string, username: string) => request<{ up_to_id: number | null; status: 'seen' }>(`/api/messages/direct/${encodeURIComponent(username)}/seen`, {
