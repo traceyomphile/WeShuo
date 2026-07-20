@@ -22,7 +22,7 @@ async def lifespan(_: FastAPI):
     initialise_database()
     settings.media_directory.mkdir(parents=True, exist_ok=True)
     if settings.secret_key == "change-me-in-production":
-        print("WARNING: Set ARCP_SECRET_KEY before deploying.")
+        print("WARNING: Set WESHUO_SECRET_KEY before deploying.")
     yield
 
 

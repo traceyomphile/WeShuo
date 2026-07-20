@@ -37,14 +37,25 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
   const [toast, setToast] = useState('')
   const socketRef = useRef<WebSocket | null>(null)
   const usersRef = useRef<User[]>([])
-  const endRef = useRef<HTMLDivElement>(null)
+  const messageAreaRef = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const signalHandler = useRef<(event: SocketEvent) => void>(() => {})
 
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { usersRef.current = users }, [users])
   useEffect(() => { if (toast) { const id = window.setTimeout(() => setToast(''), 3500); return () => clearTimeout(id) } }, [toast])
-  useEffect(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), [messages])
+  useEffect(() => {
+    const messageArea = messageAreaRef.current
+    if (!messageArea) return
+
+    // Scroll only the conversation container. scrollIntoView() can also move
+    // the browser viewport, which previously pushed the app off-screen.
+    const frame = window.requestAnimationFrame(() => {
+      messageArea.scrollTop = messageArea.scrollHeight
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [messages])
 
   const sendSignal = useCallback((event: object) => {
     if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify(event))
@@ -121,7 +132,7 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
     finally { setLoadingChat(false) }
   }
 
-  async function sendMessage(event: SubmitEvent) {
+  async function sendMessage(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!selected || (!text.trim() && !file) || sending) return
     setSending(true)
@@ -130,7 +141,11 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
       const message = selected.kind === 'direct'
         ? await api.sendDirect(token, selected.name, text.trim(), mediaId)
         : await api.sendGroup(token, selected.id, text.trim(), mediaId)
-      setMessages(previous => [...previous, message])
+      setMessages(previous => (
+        previous.some(existing => existing.id === message.id)
+          ? previous
+          : [...previous, message]
+      ))
       setText('')
       setFile(null)
       if (fileInput.current) fileInput.current.value = ''
@@ -201,7 +216,7 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
               <button className="icon-button" disabled={!selected.online} onClick={() => calls.startCall(selected.name, 'video')} title={selected.online ? 'Video call' : 'User is offline'}><Video size={20} /></button>
             </>}
           </header>
-          <div className="message-area">
+          <div ref={messageAreaRef} className="message-area">
             {loadingChat ? <div className="message-loader"><i /><span>Loading conversation…</span></div> : !messages.length ? <div className="conversation-empty"><MessageCircleMore size={38} /><h3>No messages yet</h3><p>Start the conversation. A suspiciously empty chat deserves fixing.</p></div> : messages.map((message, index) => {
               const mine = message.sender === currentUser.username
               const showSender = selected.kind === 'group' && !mine && messages[index - 1]?.sender !== message.sender
@@ -214,7 +229,7 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
                 </div></div>
               </article>
             })}
-            <div ref={endRef} />
+            <div aria-hidden="true" />
           </div>
           <form className="composer" onSubmit={sendMessage}>
             {file && <div className="selected-file"><Paperclip size={15} /><span>{file.name}</span><button type="button" onClick={() => setFile(null)}><X size={15} /></button></div>}
@@ -249,7 +264,7 @@ function CreateGroupModal({ users, token, onClose, onCreated, onError }: { users
   const [name, setName] = useState('')
   const [members, setMembers] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
-  async function submit(event: SubmitEvent) {
+  async function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true)
     try { await api.createGroup(token, name.trim(), members); onCreated() }
     catch (error) { onError(errorMessage(error)) }

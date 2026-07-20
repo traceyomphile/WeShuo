@@ -12,7 +12,14 @@ export default function AuthScreen({ onAuthenticated }: Props) {
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
 
-  useEffect(() => { const id = window.setTimeout(() => setReady(true), 4000); return () => clearTimeout(id) }, [])
+  useEffect(() => { 
+    const timer = window.setTimeout(() => {
+      setReady(true)
+    }, 4000)
+    
+    return () => window.clearTimeout(timer) 
+  }, [])
+
   useEffect(() => {
     if (!notice || notice.type === 'success') return
     const id = window.setTimeout(() => setNotice(null), 2200)
@@ -52,7 +59,9 @@ export default function AuthScreen({ onAuthenticated }: Props) {
 
       <section className="auth-panel">
         <main className="auth-card active">
-          <h2 key={mode} className="auth-title">{mode === 'login' ? 'LOGIN' : 'SIGN UP'}</h2>
+          <h2 key={mode} className="auth-title">
+            {mode === 'login' ? 'LOGIN' : 'SIGN UP'}
+          </h2>
           <form key={mode} className="auth-form" onSubmit={submit}>
             <label htmlFor="username">Username</label>
             <input id="username" name="username" placeholder={mode === 'login' ? 'username' : 'enter username'} minLength={3} maxLength={30} autoComplete="username" required />
