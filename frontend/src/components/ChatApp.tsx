@@ -33,6 +33,7 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
   const [socketOnline, setSocketOnline] = useState(false)
   const [unread, setUnread] = useState<Record<string, number>>({})
   const [showMobileSidebar, setShowMobileSidebar] = useState(true)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [showGroupModal, setShowGroupModal] = useState(false)
   const [toast, setToast] = useState('')
   const socketRef = useRef<WebSocket | null>(null)
@@ -167,9 +168,27 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
 
   return (
     <main className="chat-shell">
-      <aside className={`sidebar ${showMobileSidebar ? 'mobile-open' : ''}`}>
+      <aside
+        id="chat-sidebar"
+        className={`sidebar ${showMobileSidebar ? 'mobile-open' : ''} ${sidebarCollapsed ? 'collapsed' : ''}`}
+      >
         <header className="sidebar-header">
-          <div className="mini-logo">W<span>3</span></div>
+          <button
+            type="button"
+            className="mini-logo"
+            onClick={() => {
+              if (window.innerWidth <= 800) {
+                setShowMobileSidebar((current) => !current)
+              } else {
+                setSidebarCollapsed((current) => !current)
+              }
+            }}
+            aria-controls="chat-sidebar"
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            W<span>3</span>
+          </button>
           <div><strong>W3SHUŌ</strong><small><i className={socketOnline ? 'online' : ''} />{socketOnline ? 'Connected' : 'Reconnecting…'}</small></div>
           <button className="icon-button" onClick={onLogout} title="Log out"><LogOut size={18} /></button>
         </header>

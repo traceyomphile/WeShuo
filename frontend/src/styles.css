@@ -442,6 +442,8 @@ textarea:focus-visible {
   z-index: 10;
   border-right: 1px solid var(--line-soft);
   background: linear-gradient(180deg, #07101d, #060d18);
+  overflow: hidden;
+  transition: width 0.25s ease, flex-basis 0.25s ease, transform 0.25s ease;
 }
 .sidebar-header {
   height: 78px;
@@ -465,9 +467,45 @@ textarea:focus-visible {
     italic 800 1rem "Space Grotesk",
     sans-serif;
   box-shadow: 0 0 22px rgba(43, 86, 222, 0.15);
+  padding: 0;
+  cursor: pointer;
+}
+.mini-logo:hover {
+  border-color: var(--blue);
+  box-shadow: 0 0 28px rgba(43, 86, 222, 0.28);
+}
+.mini-logo:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
 }
 .mini-logo span {
   color: var(--blue);
+}
+
+@media (min-width: 801px) {
+  .sidebar.collapsed {
+    width: 72px;
+    flex-basis: 72px;
+  }
+
+  .sidebar.collapsed .sidebar-header {
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .sidebar.collapsed .sidebar-header > div:nth-child(2),
+  .sidebar.collapsed .sidebar-header > .icon-button,
+  .sidebar.collapsed .search-box,
+  .sidebar.collapsed .sidebar-scroll,
+  .sidebar.collapsed .profile-card > span:nth-child(2),
+  .sidebar.collapsed .profile-card > svg {
+    display: none;
+  }
+
+  .sidebar.collapsed .profile-card {
+    justify-content: center;
+    padding-inline: 0;
+  }
 }
 .sidebar-header > div:nth-child(2) {
   min-width: 0;
