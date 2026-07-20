@@ -22,6 +22,19 @@ class PasswordUpdate(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class AccountDelete(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    confirmation: Literal["DELETE"]
+
+
+class ConnectionCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=30)
+
+
+class ConnectionDecision(BaseModel):
+    action: Literal["accept", "reject"]
+
+
 class DirectMessageCreate(BaseModel):
     recipient: str = Field(min_length=3, max_length=30)
     content: str = Field(default="", max_length=4000)

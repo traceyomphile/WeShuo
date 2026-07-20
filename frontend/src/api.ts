@@ -1,4 +1,4 @@
-import type { AuthUser, Group, GroupMember, Message, User } from './types'
+import type { AuthUser, ConnectionRequest, Group, GroupMember, Message, User } from './types'
 
 export const API_URL = (import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000').replace(/\/$/, '')
 
@@ -43,8 +43,18 @@ export const api = {
   changePassword: (token: string, currentPassword: string, newPassword: string) => request<void>('/api/users/me/password', {
     method: 'POST', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
   }, token),
+  deleteAccount: (token: string, currentPassword: string) => request<void>('/api/users/me', {
+    method: 'DELETE', body: JSON.stringify({ current_password: currentPassword, confirmation: 'DELETE' }),
+  }, token),
   users: (token: string, search = '') => request<User[]>(`/api/users?search=${encodeURIComponent(search)}`, {}, token),
   conversations: (token: string) => request<User[]>('/api/conversations', {}, token),
+  connectionRequests: (token: string) => request<ConnectionRequest[]>('/api/connections/requests', {}, token),
+  sendConnectionRequest: (token: string, username: string) => request<{ username: string; status: 'pending_outgoing'; created_at: string }>('/api/connections/requests', {
+    method: 'POST', body: JSON.stringify({ username }),
+  }, token),
+  respondToConnectionRequest: (token: string, username: string, action: 'accept' | 'reject') => request<{ username: string; status: 'accepted' | 'rejected' }>(`/api/connections/requests/${encodeURIComponent(username)}`, {
+    method: 'PATCH', body: JSON.stringify({ action }),
+  }, token),
   groups: (token: string) => request<Group[]>('/api/groups', {}, token),
   createGroup: (token: string, name: string, members: string[]) => request<{ id: number }>('/api/groups', {
     method: 'POST', body: JSON.stringify({ name, members }),

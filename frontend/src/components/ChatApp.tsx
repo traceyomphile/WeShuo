@@ -2,12 +2,12 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode, SubmitEvent } from 'react'
 import {
   ArrowDownToLine, ArrowLeft, Camera, Check, CheckCheck, Clock3, Crown, Eye, EyeOff, Hash, KeyRound, LogOut, Menu, MessageCircleMore,
-  Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Shield, ShieldOff, Smile, Square, UserMinus, UserPlus, UsersRound, Video, X,
+  Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Shield, ShieldOff, Smile, Square, Trash2, UserCheck, UserMinus, UserPlus, UsersRound, UserX, Video, X,
 } from 'lucide-react'
 import { api, socketUrl } from '../api'
 import { errorMessage } from '../utils/errors'
 import { useWebRTC } from '../hooks/useWebRTC'
-import type { AuthUser, ChatTarget, Group, GroupMember, Message, MessageReceipt, SocketEvent, User } from '../types'
+import type { AuthUser, ChatTarget, ConnectionRequest, Group, GroupMember, Message, MessageReceipt, SocketEvent, User } from '../types'
 import CallOverlay from './CallOverlay'
 
 interface Props { token: string; currentUser: AuthUser; onLogout: () => void; onSessionUpdated: (token: string, user: AuthUser) => void }
@@ -58,6 +58,7 @@ function displayMessageDate(value: string) {
 export default function ChatApp({ token, currentUser, onLogout, onSessionUpdated }: Props) {
   const [conversations, setConversations] = useState<User[]>([])
   const [searchResults, setSearchResults] = useState<User[]>([])
+  const [connectionRequests, setConnectionRequests] = useState<ConnectionRequest[]>([])
   const [groupCandidates, setGroupCandidates] = useState<User[]>([])
   const [searching, setSearching] = useState(false)
   const [groups, setGroups] = useState<Group[]>([])
@@ -78,6 +79,7 @@ export default function ChatApp({ token, currentUser, onLogout, onSessionUpdated
   const [showGroupModal, setShowGroupModal] = useState(false)
   const [manageGroup, setManageGroup] = useState<GroupTarget | null>(null)
   const [showAccountSettings, setShowAccountSettings] = useState(false)
+  const [connectionBusy, setConnectionBusy] = useState('')
   const [toast, setToast] = useState('')
   const socketRef = useRef<WebSocket | null>(null)
   const usersRef = useRef<User[]>([])
@@ -135,14 +137,16 @@ export default function ChatApp({ token, currentUser, onLogout, onSessionUpdated
 
   const loadContacts = useCallback(async () => {
     try {
-      const [people, rooms, candidates] = await Promise.all([
+      const [people, rooms, candidates, requests] = await Promise.all([
         api.conversations(token),
         api.groups(token),
         api.users(token),
+        api.connectionRequests(token),
       ])
       setConversations(people)
       setGroups(rooms)
       setGroupCandidates(candidates)
+      setConnectionRequests(requests)
     } catch (error) { setToast(errorMessage(error)) }
   }, [token])
 
@@ -161,11 +165,11 @@ export default function ChatApp({ token, currentUser, onLogout, onSessionUpdated
       const latest = groups.find(group => group.id === current.id)
       return latest ? groupTarget(latest) : current
     }
-    const timeout = window.setTimeout(() => {
-      setSelected(syncGroup)
+    const frame = window.requestAnimationFrame(() => {
+      setSelected(current => syncGroup(current))
       setManageGroup(current => syncGroup(current) as GroupTarget | null)
-    }, 0)
-    return () => window.clearTimeout(timeout)
+    })
+    return () => window.cancelAnimationFrame(frame)
   }, [groups])
 
   useEffect(() => {
@@ -225,6 +229,29 @@ export default function ChatApp({ token, currentUser, onLogout, onSessionUpdated
               ? { ...message, delivery_status: receipt.status }
               : message
           )))
+          return
+        }
+        if (event.type === 'connection_request' || event.type === 'connection_accepted' || event.type === 'connection_rejected') {
+          const connectionEvent = event.data as { username?: string }
+          const notice = event.type === 'connection_request'
+            ? `${connectionEvent.username ?? 'Someone'} sent you a connect request.`
+            : event.type === 'connection_accepted'
+              ? `${connectionEvent.username ?? 'A user'} accepted your connect request.`
+              : `${connectionEvent.username ?? 'A user'} declined your connect request.`
+          if (connectionEvent.username) {
+            const nextStatus = event.type === 'connection_request'
+              ? 'pending_incoming'
+              : event.type === 'connection_accepted'
+                ? 'connected'
+                : 'none'
+            setSearchResults(previous => previous.map(item => item.username === connectionEvent.username ? { ...item, connection_status: nextStatus } : item))
+          }
+          setToast(notice)
+          void loadContacts()
+          return
+        }
+        if (event.type === 'error') {
+          setToast(event.detail ?? 'The requested action could not be completed.')
           return
         }
         if (event.type === 'group_added' || event.type === 'group_members_changed' || event.type === 'group_removed' || event.type === 'group_updated') {
@@ -302,6 +329,30 @@ export default function ChatApp({ token, currentUser, onLogout, onSessionUpdated
       }
     } catch (error) { setToast(errorMessage(error)); setMessages([]) }
     finally { setLoadingChat(false) }
+  }
+
+  async function sendConnectRequest(user: User) {
+    if (connectionBusy) return
+    setConnectionBusy(user.username)
+    try {
+      await api.sendConnectionRequest(token, user.username)
+      setSearchResults(previous => previous.map(item => item.id === user.id ? { ...item, connection_status: 'pending_outgoing' } : item))
+      setToast(`Connect request sent to ${user.username}.`)
+    } catch (error) { setToast(errorMessage(error)) }
+    finally { setConnectionBusy('') }
+  }
+
+  async function respondToConnectRequest(user: User, action: 'accept' | 'reject') {
+    if (connectionBusy) return
+    setConnectionBusy(user.username)
+    try {
+      await api.respondToConnectionRequest(token, user.username, action)
+      setConnectionRequests(previous => previous.filter(request => request.id !== user.id))
+      setSearchResults(previous => previous.map(item => item.id === user.id ? { ...item, connection_status: action === 'accept' ? 'connected' : 'none' } : item))
+      setToast(action === 'accept' ? `You are now connected with ${user.username}.` : `Connect request from ${user.username} declined.`)
+      await loadContacts()
+    } catch (error) { setToast(errorMessage(error)) }
+    finally { setConnectionBusy('') }
   }
 
   async function sendMessage(event: SubmitEvent<HTMLFormElement>) {
@@ -457,11 +508,33 @@ export default function ChatApp({ token, currentUser, onLogout, onSessionUpdated
         </header>
         <div className="search-box"><Search size={17} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by username" /></div>
         <div className="sidebar-scroll">
+          {!search.trim() && connectionRequests.length > 0 && <>
+            <div className="section-title"><span>CONNECT REQUESTS</span><span>{connectionRequests.length}</span></div>
+            <div className="request-list">
+              {connectionRequests.map(user => <div className="request-row" key={user.id}>
+                <span className="avatar"><GroupPicture token={token} mediaId={user.profile_media_id ?? null} fallback={avatar(user.username)} /></span>
+                <span className="chat-label"><strong>{user.username}</strong><small>Wants to connect</small></span>
+                <button type="button" className="request-action accept" disabled={Boolean(connectionBusy)} onClick={() => respondToConnectRequest(user, 'accept')} aria-label={`Accept ${user.username}'s connect request`} title="Accept"><UserCheck size={16} /></button>
+                <button type="button" className="request-action reject" disabled={Boolean(connectionBusy)} onClick={() => respondToConnectRequest(user, 'reject')} aria-label={`Decline ${user.username}'s connect request`} title="Decline"><UserX size={16} /></button>
+              </div>)}
+            </div>
+          </>}
           <div className="section-title"><span>{search.trim() ? 'SEARCH RESULTS' : 'MESSAGES'}</span><span>{search.trim() ? searchResults.length : conversations.length}</span></div>
           <div className="chat-list">
             {(search.trim() ? searchResults : conversations).map(user => {
               const target: ChatTarget = { kind: 'direct', id: user.id, name: user.username, online: user.online, lastSeen: user.last_seen, profileMediaId: user.profile_media_id }
               const count = unread[chatKey(target)] ?? 0
+              if (search.trim() && user.connection_status !== 'connected') {
+                return <div className="connection-result" key={user.id}>
+                  <span className="avatar"><GroupPicture token={token} mediaId={user.profile_media_id ?? null} fallback={avatar(user.username)} /><i className={user.online ? 'online' : ''} /></span>
+                  <span className="chat-label"><strong>{user.username}</strong><small>{user.connection_status === 'pending_outgoing' ? 'Request sent' : user.connection_status === 'pending_incoming' ? 'Sent you a request' : 'Not connected'}</small></span>
+                  {user.connection_status === 'pending_outgoing'
+                    ? <button type="button" className="connect-button pending" disabled>REQUESTED</button>
+                    : user.connection_status === 'pending_incoming'
+                      ? <div className="inline-request-actions"><button type="button" className="request-action accept" disabled={Boolean(connectionBusy)} onClick={() => respondToConnectRequest(user, 'accept')} aria-label={`Accept ${user.username}'s connect request`}><Check size={15} /></button><button type="button" className="request-action reject" disabled={Boolean(connectionBusy)} onClick={() => respondToConnectRequest(user, 'reject')} aria-label={`Decline ${user.username}'s connect request`}><X size={15} /></button></div>
+                      : <button type="button" className="connect-button" disabled={Boolean(connectionBusy)} onClick={() => sendConnectRequest(user)}><UserPlus size={14} /> CONNECT</button>}
+                </div>
+              }
               return <button key={user.id} className={selected?.kind === 'direct' && selected.id === user.id ? 'active' : ''} onClick={() => selectChat(target)}>
                 <span className="avatar"><GroupPicture token={token} mediaId={user.profile_media_id ?? null} fallback={avatar(user.username)} /><i className={user.online ? 'online' : ''} /></span>
                 <span className="chat-label"><strong>{user.username}</strong><small>{user.online ? 'Online' : user.last_seen ? 'Offline' : 'Start a conversation'}</small></span>
@@ -578,6 +651,7 @@ export default function ChatApp({ token, currentUser, onLogout, onSessionUpdated
         currentUser={currentUser}
         onClose={() => setShowAccountSettings(false)}
         onSessionUpdated={onSessionUpdated}
+        onAccountDeleted={onLogout}
         onNotice={setToast}
       />}
       {calls.call && <CallOverlay call={calls.call} localStream={calls.localStream} remoteStream={calls.remoteStream} onAccept={calls.acceptCall} onReject={calls.rejectCall} onEnd={calls.endCall} />}
@@ -662,11 +736,12 @@ function GroupPicture({ token, mediaId, fallback, onError }: {
   return source ? <img className="group-picture" src={source} alt="" /> : <>{fallback}</>
 }
 
-function AccountSettingsModal({ token, currentUser, onClose, onSessionUpdated, onNotice }: {
+function AccountSettingsModal({ token, currentUser, onClose, onSessionUpdated, onAccountDeleted, onNotice }: {
   token: string
   currentUser: AuthUser
   onClose: () => void
   onSessionUpdated: (token: string, user: AuthUser) => void
+  onAccountDeleted: () => void
   onNotice: (text: string) => void
 }) {
   const [username, setUsername] = useState(currentUser.username)
@@ -683,6 +758,11 @@ function AccountSettingsModal({ token, currentUser, onClose, onSessionUpdated, o
   const [showNewPassword, setShowNewPassword] = useState(false)
   const [savingProfile, setSavingProfile] = useState(false)
   const [savingPassword, setSavingPassword] = useState(false)
+  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false)
+  const [deletePassword, setDeletePassword] = useState('')
+  const [deleteConfirmation, setDeleteConfirmation] = useState('')
+  const [showDeletePassword, setShowDeletePassword] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const usernameChanged = username.trim() !== currentUser.username
   const today = new Date().toISOString().slice(0, 10)
 
@@ -732,6 +812,19 @@ function AccountSettingsModal({ token, currentUser, onClose, onSessionUpdated, o
     finally { setSavingPassword(false) }
   }
 
+  async function deleteAccount(event: SubmitEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (deleting || deleteConfirmation !== 'DELETE') return
+    setDeleting(true)
+    try {
+      await api.deleteAccount(token, deletePassword)
+      onAccountDeleted()
+    } catch (error) {
+      onNotice(errorMessage(error))
+      setDeleting(false)
+    }
+  }
+
   return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section className="modal-card account-settings" role="dialog" aria-modal="true" aria-label="Account settings">
       <header><div><p className="eyebrow">YOUR ACCOUNT</p><h2>Settings</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Close settings"><X size={20} /></button></header>
@@ -777,6 +870,20 @@ function AccountSettingsModal({ token, currentUser, onClose, onSessionUpdated, o
         </div>
         <div className="settings-actions"><button className="primary-button compact" disabled={savingPassword}>{savingPassword ? 'CHANGING…' : 'CHANGE PASSWORD'}</button></div>
       </form>
+
+      <section className="settings-section danger-zone">
+        <div className="settings-section-title"><Trash2 size={18} /><div><strong>Delete account</strong><small>Permanently remove your account and personal data.</small></div></div>
+        {!showDeleteConfirmation
+          ? <><p>This removes your messages, private conversations, memberships, profile information, and uploaded files. Shared groups will be transferred to another active member.</p><button type="button" className="delete-account-button" onClick={() => setShowDeleteConfirmation(true)}>DELETE MY ACCOUNT</button></>
+          : <form className="delete-confirmation" onSubmit={deleteAccount}>
+            <div className="delete-warning"><strong>This cannot be undone.</strong><span>Enter your password and type <b>DELETE</b> to continue.</span></div>
+            <label htmlFor="deleteAccountPassword">Current password</label>
+            <div className="settings-password-field"><input id="deleteAccountPassword" type={showDeletePassword ? 'text' : 'password'} value={deletePassword} onChange={event => setDeletePassword(event.target.value)} autoComplete="current-password" required /><button type="button" onClick={() => setShowDeletePassword(value => !value)} aria-label={showDeletePassword ? 'Hide deletion password' : 'Show deletion password'}>{showDeletePassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>
+            <label htmlFor="deleteAccountConfirmation">Type DELETE</label>
+            <input id="deleteAccountConfirmation" value={deleteConfirmation} onChange={event => setDeleteConfirmation(event.target.value)} autoComplete="off" placeholder="DELETE" required />
+            <div className="delete-actions"><button type="button" className="text-action" disabled={deleting} onClick={() => { setShowDeleteConfirmation(false); setDeletePassword(''); setDeleteConfirmation('') }}>Cancel</button><button className="delete-account-button" disabled={deleting || deleteConfirmation !== 'DELETE'}>{deleting ? 'DELETING…' : 'PERMANENTLY DELETE'}</button></div>
+          </form>}
+      </section>
     </section>
   </div>
 }
@@ -803,13 +910,12 @@ function ManageGroupMembersModal({ group, currentUser, candidates, token, onClos
   const isAdmin = group.role === 'admin'
 
   useEffect(() => {
-    // Defer updates to avoid synchronous setState within the effect body
     const timer = window.setTimeout(() => {
       setName(group.name)
       setDescription(group.description)
     }, 0)
     return () => { window.clearTimeout(timer) }
-  }, [group.description, group.name])
+  }, [group.id, group.name, group.description])
 
   const refreshMembers = useCallback(async () => {
     setLoading(true)

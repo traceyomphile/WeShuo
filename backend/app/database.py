@@ -61,6 +61,17 @@ def initialise_database() -> None:
         left_at TEXT,
         PRIMARY KEY (group_id, user_id)
     );
+    CREATE TABLE IF NOT EXISTS connections (
+        user_one_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_two_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        requested_by_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
+        created_at TEXT NOT NULL,
+        responded_at TEXT,
+        PRIMARY KEY (user_one_id, user_two_id),
+        CHECK (user_one_id < user_two_id),
+        CHECK (requested_by_id IN (user_one_id, user_two_id))
+    );
     CREATE TABLE IF NOT EXISTS media (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         uploader_id INTEGER NOT NULL REFERENCES users(id),
@@ -88,6 +99,8 @@ def initialise_database() -> None:
         ON messages(group_id, id);
     CREATE INDEX IF NOT EXISTS idx_group_members_user
         ON group_members(user_id);
+    CREATE INDEX IF NOT EXISTS idx_connections_requested
+        ON connections(requested_by_id, status);
     """
     with write_lock, database() as connection:
         connection.executescript(schema)
@@ -129,5 +142,17 @@ def initialise_database() -> None:
                  SELECT 1 FROM groups g
                  WHERE g.id=group_members.group_id AND g.creator_id=group_members.user_id
                )"""
+        )
+        # Preserve access to direct chats created before connection requests
+        # existed by treating those pairs as already accepted.
+        connection.execute(
+            """INSERT OR IGNORE INTO connections(
+                   user_one_id,user_two_id,requested_by_id,status,created_at,responded_at
+               )
+               SELECT MIN(sender_id,recipient_id), MAX(sender_id,recipient_id),
+                      MIN(sender_id,recipient_id), 'accepted', MIN(created_at), MIN(created_at)
+               FROM messages
+               WHERE group_id IS NULL
+               GROUP BY MIN(sender_id,recipient_id), MAX(sender_id,recipient_id)"""
         )
         connection.commit()

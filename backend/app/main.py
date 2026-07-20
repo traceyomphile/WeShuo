@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 
 from .config import settings
 from .database import database, initialise_database, utc_now, write_lock
-from .models import AccountUpdate, AdminUpdate, Credentials, DirectMessageCreate, GroupCreate, GroupMessageCreate, GroupUpdate, MemberCreate, PasswordUpdate
+from .models import AccountDelete, AccountUpdate, AdminUpdate, ConnectionCreate, ConnectionDecision, Credentials, DirectMessageCreate, GroupCreate, GroupMessageCreate, GroupUpdate, MemberCreate, PasswordUpdate
 from .connection_manager import manager
 from .security import (
     USERNAME_PATTERN, create_token, decode_token, get_current_user,
@@ -87,6 +87,24 @@ def require_group_admin(connection, group_id: int, user_id: int):
 def validate_message(content: str, media_id: int | None) -> None:
     if not content and media_id is None:
         raise HTTPException(status_code=422, detail="Message needs text or a media_id")
+
+
+def connection_pair(first_id: int, second_id: int) -> tuple[int, int]:
+    return (first_id, second_id) if first_id < second_id else (second_id, first_id)
+
+
+def require_direct_connection(connection, first_id: int, second_id: int) -> None:
+    user_one_id, user_two_id = connection_pair(first_id, second_id)
+    connected = connection.execute(
+        """SELECT 1 FROM connections
+           WHERE user_one_id=? AND user_two_id=? AND status='accepted'""",
+        (user_one_id, user_two_id),
+    ).fetchone()
+    if connected is None:
+        raise HTTPException(
+            status_code=403,
+            detail="A connect request must be accepted before you can communicate with this user",
+        )
 
 
 @app.get("/api/health")
@@ -211,13 +229,177 @@ def change_password(body: PasswordUpdate, user=Depends(get_current_user)):
         connection.commit()
 
 
+@app.delete("/api/users/me", status_code=204)
+async def delete_account(body: AccountDelete, user=Depends(get_current_user)):
+    stored_names: list[str] = []
+    with write_lock, database() as connection:
+        account = connection.execute(
+            "SELECT password_hash FROM users WHERE id=?", (user["id"],)
+        ).fetchone()
+        if account is None or not verify_password(body.current_password, account["password_hash"]):
+            raise HTTPException(status_code=403, detail="Current password is incorrect")
+
+        owned_media = connection.execute(
+            "SELECT id, stored_name FROM media WHERE uploader_id=?", (user["id"],)
+        ).fetchall()
+        media_ids = [row["id"] for row in owned_media]
+        stored_names = [row["stored_name"] for row in owned_media]
+
+        # Keep shared groups alive by promoting the longest-serving active
+        # admin/member. A group with no remaining member is removed.
+        owned_groups = connection.execute(
+            "SELECT id FROM groups WHERE creator_id=?", (user["id"],)
+        ).fetchall()
+        for group in owned_groups:
+            successor = connection.execute(
+                """SELECT user_id FROM group_members
+                   WHERE group_id=? AND user_id != ? AND is_active=1
+                   ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, joined_at, user_id
+                   LIMIT 1""",
+                (group["id"], user["id"]),
+            ).fetchone()
+            if successor:
+                connection.execute(
+                    "UPDATE groups SET creator_id=? WHERE id=?",
+                    (successor["user_id"], group["id"]),
+                )
+                connection.execute(
+                    "UPDATE group_members SET role='admin' WHERE group_id=? AND user_id=?",
+                    (group["id"], successor["user_id"]),
+                )
+            else:
+                connection.execute("DELETE FROM groups WHERE id=?", (group["id"],))
+
+        if media_ids:
+            placeholders = ",".join("?" for _ in media_ids)
+            connection.execute(
+                f"UPDATE users SET profile_media_id=NULL WHERE profile_media_id IN ({placeholders})",
+                media_ids,
+            )
+            connection.execute(
+                f"UPDATE groups SET profile_media_id=NULL WHERE profile_media_id IN ({placeholders})",
+                media_ids,
+            )
+            connection.execute(
+                f"DELETE FROM messages WHERE media_id IN ({placeholders}) AND length(content)=0",
+                media_ids,
+            )
+            connection.execute(
+                f"UPDATE messages SET media_id=NULL WHERE media_id IN ({placeholders})",
+                media_ids,
+            )
+
+        connection.execute(
+            "DELETE FROM messages WHERE sender_id=? OR recipient_id=?",
+            (user["id"], user["id"]),
+        )
+        connection.execute("DELETE FROM media WHERE uploader_id=?", (user["id"],))
+        connection.execute("DELETE FROM users WHERE id=?", (user["id"],))
+        connection.commit()
+
+    for stored_name in stored_names:
+        try:
+            (settings.media_directory / stored_name).unlink(missing_ok=True)
+        except OSError:
+            pass
+    await manager.close_user(user["id"], code=1000)
+
+
+@app.get("/api/connections/requests")
+def incoming_connection_requests(user=Depends(get_current_user)):
+    with database() as connection:
+        rows = connection.execute(
+            """SELECT requester.id, requester.username, requester.profile_media_id,
+                      requester.last_seen, c.created_at
+               FROM connections c
+               JOIN users requester ON requester.id=c.requested_by_id
+               WHERE c.status='pending' AND c.requested_by_id != ?
+                 AND (c.user_one_id=? OR c.user_two_id=?)
+               ORDER BY c.created_at DESC""",
+            (user["id"], user["id"], user["id"]),
+        ).fetchall()
+    return [{**dict(row), "online": manager.is_online(row["id"]), "connection_status": "pending_incoming"} for row in rows]
+
+
+@app.post("/api/connections/requests", status_code=201)
+async def send_connection_request(body: ConnectionCreate, user=Depends(get_current_user)):
+    with write_lock, database() as connection:
+        recipient = user_by_username(connection, body.username.strip())
+        if recipient is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if recipient["id"] == user["id"]:
+            raise HTTPException(status_code=422, detail="You cannot connect with yourself")
+        user_one_id, user_two_id = connection_pair(user["id"], recipient["id"])
+        existing = connection.execute(
+            "SELECT status,requested_by_id FROM connections WHERE user_one_id=? AND user_two_id=?",
+            (user_one_id, user_two_id),
+        ).fetchone()
+        if existing and existing["status"] == "accepted":
+            raise HTTPException(status_code=409, detail="You are already connected")
+        if existing and existing["status"] == "pending":
+            detail = "This user has already sent you a connect request" if existing["requested_by_id"] != user["id"] else "Connect request already sent"
+            raise HTTPException(status_code=409, detail=detail)
+        created_at = utc_now()
+        connection.execute(
+            """INSERT INTO connections(user_one_id,user_two_id,requested_by_id,status,created_at,responded_at)
+               VALUES(?,?,?,'pending',?,NULL)
+               ON CONFLICT(user_one_id,user_two_id) DO UPDATE SET
+                 requested_by_id=excluded.requested_by_id,
+                 status='pending',created_at=excluded.created_at,responded_at=NULL""",
+            (user_one_id, user_two_id, user["id"], created_at),
+        )
+        connection.commit()
+    payload = {"username": user["username"], "created_at": created_at}
+    await manager.send(recipient["id"], {"type": "connection_request", "data": payload})
+    return {"username": recipient["username"], "status": "pending_outgoing", "created_at": created_at}
+
+
+@app.patch("/api/connections/requests/{username}")
+async def respond_to_connection_request(username: str, body: ConnectionDecision, user=Depends(get_current_user)):
+    with write_lock, database() as connection:
+        requester = user_by_username(connection, username)
+        if requester is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        user_one_id, user_two_id = connection_pair(user["id"], requester["id"])
+        pending = connection.execute(
+            """SELECT 1 FROM connections
+               WHERE user_one_id=? AND user_two_id=? AND requested_by_id=? AND status='pending'""",
+            (user_one_id, user_two_id, requester["id"]),
+        ).fetchone()
+        if pending is None:
+            raise HTTPException(status_code=404, detail="Pending connect request not found")
+        status = "accepted" if body.action == "accept" else "rejected"
+        connection.execute(
+            """UPDATE connections SET status=?,responded_at=?
+               WHERE user_one_id=? AND user_two_id=?""",
+            (status, utc_now(), user_one_id, user_two_id),
+        )
+        connection.commit()
+    await manager.send(requester["id"], {
+        "type": f"connection_{status}",
+        "data": {"username": user["username"]},
+    })
+    return {"username": requester["username"], "status": status}
+
+
 @app.get("/api/users")
 def users(search: str = Query("", max_length=50), user=Depends(get_current_user)):
     with database() as connection:
         rows = connection.execute(
-            """SELECT id,username,profile_media_id,last_seen FROM users
-               WHERE id != ? AND username LIKE ? ORDER BY username LIMIT 100""",
-            (user["id"], f"%{search}%"),
+            """SELECT u.id,u.username,u.profile_media_id,u.last_seen,
+                      CASE
+                        WHEN c.status='accepted' THEN 'connected'
+                        WHEN c.status='pending' AND c.requested_by_id=? THEN 'pending_outgoing'
+                        WHEN c.status='pending' THEN 'pending_incoming'
+                        ELSE 'none'
+                      END AS connection_status
+               FROM users u
+               LEFT JOIN connections c ON
+                 (c.user_one_id=? AND c.user_two_id=u.id) OR
+                 (c.user_two_id=? AND c.user_one_id=u.id)
+               WHERE u.id != ? AND u.username LIKE ?
+               ORDER BY u.username LIMIT 100""",
+            (user["id"], user["id"], user["id"], user["id"], f"%{search}%"),
         ).fetchall()
     return [{**dict(row), "online": manager.is_online(row["id"])} for row in rows]
 
@@ -226,8 +408,13 @@ def users(search: str = Query("", max_length=50), user=Depends(get_current_user)
 def direct_conversations(user=Depends(get_current_user)):
     with database() as connection:
         rows = connection.execute(
-            """SELECT u.id, u.username, u.profile_media_id, u.last_seen, MAX(m.id) AS latest_message_id
+            """SELECT u.id, u.username, u.profile_media_id, u.last_seen,
+                      'connected' AS connection_status, MAX(m.id) AS latest_message_id
                FROM users u
+               JOIN connections c ON c.status='accepted' AND (
+                 (c.user_one_id=? AND c.user_two_id=u.id) OR
+                 (c.user_two_id=? AND c.user_one_id=u.id)
+               )
                JOIN messages m ON m.group_id IS NULL AND (
                    (m.sender_id=? AND m.recipient_id=u.id) OR
                    (m.recipient_id=? AND m.sender_id=u.id)
@@ -235,7 +422,7 @@ def direct_conversations(user=Depends(get_current_user)):
                WHERE u.id != ?
                GROUP BY u.id, u.username, u.profile_media_id, u.last_seen
                ORDER BY latest_message_id DESC""",
-            (user["id"], user["id"], user["id"]),
+            (user["id"], user["id"], user["id"], user["id"], user["id"]),
         ).fetchall()
     return [{**dict(row), "online": manager.is_online(row["id"])} for row in rows]
 
@@ -246,6 +433,7 @@ def direct_history(username: str, after_id: int = 0, limit: int = Query(100, ge=
         peer = user_by_username(connection, username)
         if peer is None:
             raise HTTPException(status_code=404, detail="User not found")
+        require_direct_connection(connection, user["id"], peer["id"])
         rows = connection.execute(
             MESSAGE_SELECT + """ WHERE m.id>? AND m.group_id IS NULL AND
             ((m.sender_id=? AND m.recipient_id=?) OR (m.sender_id=? AND m.recipient_id=?))
@@ -262,6 +450,7 @@ async def send_direct(body: DirectMessageCreate, user=Depends(get_current_user))
         recipient = user_by_username(connection, body.recipient)
         if recipient is None:
             raise HTTPException(status_code=404, detail="Recipient not found")
+        require_direct_connection(connection, user["id"], recipient["id"])
         if body.media_id is not None and connection.execute("SELECT 1 FROM media WHERE id=? AND uploader_id=?", (body.media_id, user["id"])).fetchone() is None:
             raise HTTPException(status_code=404, detail="Uploaded media not found")
         cursor = connection.execute(
@@ -298,6 +487,7 @@ async def mark_direct_seen(username: str, user=Depends(get_current_user)):
         peer = user_by_username(connection, username)
         if peer is None:
             raise HTTPException(status_code=404, detail="User not found")
+        require_direct_connection(connection, user["id"], peer["id"])
         latest = connection.execute(
             """SELECT MAX(id) latest_id FROM messages
                WHERE group_id IS NULL AND sender_id=? AND recipient_id=?""",
@@ -753,8 +943,16 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                 target = event.get("target")
                 with database() as connection:
                     recipient = user_by_username(connection, str(target))
+                    connected = recipient and connection.execute(
+                        """SELECT 1 FROM connections WHERE status='accepted' AND (
+                             (user_one_id=? AND user_two_id=?) OR
+                             (user_one_id=? AND user_two_id=?))""",
+                        (user_id, recipient["id"] if recipient else -1, recipient["id"] if recipient else -1, user_id),
+                    ).fetchone()
                 if recipient is None:
                     await websocket.send_json({"type": "error", "detail": "Call target not found"})
+                elif connected is None:
+                    await websocket.send_json({"type": "error", "detail": "Connect request must be accepted before calling this user"})
                 else:
                     await manager.send(recipient["id"], {"type": event_type, "from": payload["username"], "data": event.get("data")})
             else:

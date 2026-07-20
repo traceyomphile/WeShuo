@@ -10,6 +10,12 @@ export interface AuthUser {
 
 export interface User extends AuthUser {
   online: boolean
+  connection_status?: 'none' | 'pending_incoming' | 'pending_outgoing' | 'connected'
+}
+
+export interface ConnectionRequest extends User {
+  connection_status: 'pending_incoming'
+  created_at: string
 }
 
 export interface Group {

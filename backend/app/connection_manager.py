@@ -34,6 +34,15 @@ class ConnectionManager:
             await self.disconnect(user_id, websocket)
         return delivered
 
+    async def close_user(self, user_id: int, code: int = 1000) -> None:
+        async with self._lock:
+            connections = list(self._connections.pop(user_id, set()))
+        for websocket in connections:
+            try:
+                await websocket.close(code=code)
+            except Exception:
+                pass
+
     def is_online(self, user_id: int) -> bool:
         return bool(self._connections.get(user_id))
 
