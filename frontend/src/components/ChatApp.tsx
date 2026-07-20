@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SubmitEvent } from 'react'
 import {
   ArrowDownToLine, ArrowLeft, Hash, LogOut, Menu, MessageCircleMore,
-  Mic, MoreVertical, Paperclip, Plus, Search, Send, Smile, UsersRound, Video, X,
+  Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Smile, Square, UsersRound, Video, X,
 } from 'lucide-react'
 import { api, socketUrl } from '../api'
 import { errorMessage } from '../utils/errors'
@@ -14,6 +14,7 @@ interface Props { token: string; currentUser: AuthUser; onLogout: () => void }
 
 function avatar(name: string) { return name.slice(0, 2).toUpperCase() }
 function chatKey(chat: ChatTarget) { return `${chat.kind}:${chat.id}` }
+const VOICE_NOTE_CONTENT = '🎤 Voice note'
 function displayTime(value: string) {
   const date = new Date(value)
   return Number.isNaN(date.valueOf()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -28,6 +29,8 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
   const [search, setSearch] = useState('')
   const [text, setText] = useState('')
   const [file, setFile] = useState<File | null>(null)
+  const [recording, setRecording] = useState(false)
+  const [recordingSeconds, setRecordingSeconds] = useState(0)
   const [loadingChat, setLoadingChat] = useState(false)
   const [sending, setSending] = useState(false)
   const [socketOnline, setSocketOnline] = useState(false)
@@ -40,10 +43,23 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
   const usersRef = useRef<User[]>([])
   const messageAreaRef = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const recordingStreamRef = useRef<MediaStream | null>(null)
+  const recordingChunksRef = useRef<Blob[]>([])
+  const recordingTimerRef = useRef<number | null>(null)
   const signalHandler = useRef<(event: SocketEvent) => void>(() => {})
 
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { usersRef.current = users }, [users])
+  useEffect(() => () => {
+    if (recordingTimerRef.current !== null) window.clearInterval(recordingTimerRef.current)
+    const recorder = mediaRecorderRef.current
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.onstop = null
+      recorder.stop()
+    }
+    recordingStreamRef.current?.getTracks().forEach(track => track.stop())
+  }, [])
   useEffect(() => { if (toast) { const id = window.setTimeout(() => setToast(''), 3500); return () => clearTimeout(id) } }, [toast])
   useEffect(() => {
     const messageArea = messageAreaRef.current
@@ -122,6 +138,7 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
   }, [token])
 
   async function selectChat(chat: ChatTarget) {
+    cancelVoiceRecording()
     setSelected(chat)
     setShowMobileSidebar(false)
     setUnread(previous => ({ ...previous, [chatKey(chat)]: 0 }))
@@ -152,6 +169,96 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
       if (fileInput.current) fileInput.current.value = ''
     } catch (error) { setToast(errorMessage(error)) }
     finally { setSending(false) }
+  }
+
+  function finishRecordingSession() {
+    if (recordingTimerRef.current !== null) {
+      window.clearInterval(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+    recordingStreamRef.current?.getTracks().forEach(track => track.stop())
+    recordingStreamRef.current = null
+    mediaRecorderRef.current = null
+    setRecording(false)
+    setRecordingSeconds(0)
+  }
+
+  function cancelVoiceRecording() {
+    const recorder = mediaRecorderRef.current
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.onstop = null
+      recorder.stop()
+    }
+    recordingChunksRef.current = []
+    finishRecordingSession()
+  }
+
+  async function sendVoiceNote(voiceNote: File) {
+    const chat = selectedRef.current
+    if (!chat || sending) return
+    setSending(true)
+    try {
+      const mediaId = (await api.upload(token, voiceNote)).id
+      const message = chat.kind === 'direct'
+        ? await api.sendDirect(token, chat.name, VOICE_NOTE_CONTENT, mediaId)
+        : await api.sendGroup(token, chat.id, VOICE_NOTE_CONTENT, mediaId)
+      setMessages(previous => previous.some(item => item.id === message.id) ? previous : [...previous, message])
+    } catch (error) { setToast(errorMessage(error)) }
+    finally { setSending(false) }
+  }
+
+  async function startVoiceRecording() {
+    if (!selected || sending || recording) return
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setToast('Voice recording is not supported in this browser.')
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4']
+        .find(type => MediaRecorder.isTypeSupported(type))
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+
+      recordingStreamRef.current = stream
+      recordingChunksRef.current = []
+      mediaRecorderRef.current = recorder
+      recorder.ondataavailable = event => {
+        if (event.data.size > 0) recordingChunksRef.current.push(event.data)
+      }
+      recorder.onerror = () => {
+        setToast('The voice recording failed. Please try again.')
+        cancelVoiceRecording()
+      }
+      recorder.onstop = () => {
+        const chunks = recordingChunksRef.current
+        const recordedType = recorder.mimeType || mimeType || 'audio/webm'
+        recordingChunksRef.current = []
+        finishRecordingSession()
+        const blob = new Blob(chunks, { type: recordedType })
+        if (!blob.size) {
+          setToast('No audio was captured. Please try again.')
+          return
+        }
+        const extension = recordedType.includes('ogg') ? 'ogg' : recordedType.includes('mp4') ? 'm4a' : 'webm'
+        void sendVoiceNote(new File([blob], `voice-note-${Date.now()}.${extension}`, { type: recordedType }))
+      }
+
+      recorder.start()
+      setRecording(true)
+      setRecordingSeconds(0)
+      recordingTimerRef.current = window.setInterval(() => setRecordingSeconds(value => value + 1), 1000)
+    } catch (error) {
+      finishRecordingSession()
+      setToast(error instanceof DOMException && error.name === 'NotAllowedError'
+        ? 'Microphone permission was denied.'
+        : 'Could not access your microphone.')
+    }
+  }
+
+  function stopVoiceRecording() {
+    const recorder = mediaRecorderRef.current
+    if (recorder?.state === 'recording') recorder.stop()
   }
 
   async function downloadAttachment(mediaId: number) {
@@ -231,8 +338,8 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
             <div><strong>{selected.name}</strong><small>{selected.kind === 'group' ? `${selected.memberCount} members` : selected.online ? 'Online now' : 'Offline'}</small></div>
             <span className="header-spacer" />
             {selected.kind === 'direct' && <>
-              <button className="icon-button" disabled={!selected.online} onClick={() => calls.startCall(selected.name, 'audio')} title={selected.online ? 'Audio call' : 'User is offline'}><Mic size={19} /></button>
-              <button className="icon-button" disabled={!selected.online} onClick={() => calls.startCall(selected.name, 'video')} title={selected.online ? 'Video call' : 'User is offline'}><Video size={20} /></button>
+              <button className="icon-button" disabled={!selected.online} onClick={() => calls.startCall(selected.name, 'audio')} aria-label="Audio call" title={selected.online ? 'Audio call' : 'User is offline'}><Phone size={19} /></button>
+              <button className="icon-button" disabled={!selected.online} onClick={() => calls.startCall(selected.name, 'video')} aria-label="Video call" title={selected.online ? 'Video call' : 'User is offline'}><Video size={20} /></button>
             </>}
           </header>
           <div ref={messageAreaRef} className="message-area">
@@ -242,8 +349,9 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
               return <article key={message.id} className={`message-row ${mine ? 'mine' : ''}`}>
                 {!mine && selected.kind === 'group' && <span className="message-avatar">{avatar(message.sender)}</span>}
                 <div className="bubble-wrap">{showSender && <small className="sender-name">{message.sender}</small>}<div className="message-bubble">
-                  {message.content && <p>{message.content}</p>}
-                  {message.media_id && <button className="attachment" onClick={() => downloadAttachment(message.media_id!)}><ArrowDownToLine size={18} /><span><strong>Attachment</strong><small>Click to download</small></span></button>}
+                  {message.media_id && message.content === VOICE_NOTE_CONTENT
+                    ? <VoiceNotePlayer token={token} mediaId={message.media_id} onError={setToast} />
+                    : <>{message.content && <p>{message.content}</p>}{message.media_id && <button className="attachment" onClick={() => downloadAttachment(message.media_id!)}><ArrowDownToLine size={18} /><span><strong>Attachment</strong><small>Click to download</small></span></button>}</>}
                   <time>{displayTime(message.created_at)}</time>
                 </div></div>
               </article>
@@ -252,12 +360,17 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
           </div>
           <form className="composer" onSubmit={sendMessage}>
             {file && <div className="selected-file"><Paperclip size={15} /><span>{file.name}</span><button type="button" onClick={() => setFile(null)}><X size={15} /></button></div>}
+            {recording && <div className="voice-recording"><i /><span>Recording {Math.floor(recordingSeconds / 60)}:{String(recordingSeconds % 60).padStart(2, '0')}</span><small>Tap stop to send</small></div>}
             <div className="composer-row">
               <input ref={fileInput} type="file" hidden onChange={event => setFile(event.target.files?.[0] ?? null)} />
-              <button type="button" className="icon-button" onClick={() => fileInput.current?.click()} title="Attach file"><Paperclip size={20} /></button>
-              <textarea value={text} onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} placeholder={`Message ${selected.name}`} rows={1} />
-              <button type="button" className="icon-button decorative" title="Emoji"><Smile size={20} /></button>
-              <button className="send-button" disabled={sending || (!text.trim() && !file)} title="Send"><Send size={19} /></button>
+              <button type="button" className="icon-button" disabled={recording} onClick={() => fileInput.current?.click()} title="Attach file"><Paperclip size={20} /></button>
+              <textarea disabled={recording} value={text} onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} placeholder={recording ? 'Recording voice note…' : `Message ${selected.name}`} rows={1} />
+              <button type="button" className="icon-button decorative" disabled={recording} title="Emoji"><Smile size={20} /></button>
+              {recording
+                ? <button type="button" className="send-button voice-button recording" disabled={sending} onClick={stopVoiceRecording} aria-label="Stop and send voice note" title="Stop and send voice note"><Square size={16} fill="currentColor" /></button>
+                : text.trim() || file
+                  ? <button className="send-button" disabled={sending} aria-label="Send" title="Send"><Send size={19} /></button>
+                  : <button type="button" className="send-button voice-button" disabled={sending} onClick={startVoiceRecording} aria-label="Record voice note" title="Record voice note"><Mic size={20} /></button>}
             </div>
           </form>
         </>}
@@ -297,4 +410,25 @@ function CreateGroupModal({ users, token, onClose, onCreated, onError }: { users
       <button className="primary-button" disabled={busy}>{busy ? 'CREATING…' : 'CREATE GROUP'}</button>
     </form>
   </div>
+}
+
+function VoiceNotePlayer({ token, mediaId, onError }: { token: string; mediaId: number; onError: (text: string) => void }) {
+  const [source, setSource] = useState('')
+
+  useEffect(() => {
+    let objectUrl = ''
+    let cancelled = false
+    api.download(token, mediaId).then(({ blob }) => {
+      if (cancelled) return
+      objectUrl = URL.createObjectURL(blob)
+      setSource(objectUrl)
+    }).catch(error => { if (!cancelled) onError(errorMessage(error)) })
+
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [mediaId, onError, token])
+
+  return <div className="voice-note"><Mic size={18} />{source ? <audio controls preload="metadata" src={source} /> : <span>Loading voice note…</span>}</div>
 }

@@ -941,6 +941,58 @@ i.online {
   opacity: 0.35;
   cursor: default;
 }
+.voice-button {
+  transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+.voice-button:not(:disabled):hover {
+  transform: scale(1.04);
+}
+.voice-button.recording {
+  background: #e64f64;
+  box-shadow: 0 0 0 5px rgba(230, 79, 100, 0.13);
+  animation: recording-pulse 1.35s ease-in-out infinite;
+}
+.voice-recording {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.55rem;
+  color: #ff8fa0;
+  font-size: 0.75rem;
+}
+.voice-recording i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e64f64;
+  box-shadow: 0 0 12px rgba(230, 79, 100, 0.7);
+}
+.voice-recording small {
+  margin-left: auto;
+  color: var(--muted);
+}
+.voice-note {
+  min-width: min(270px, 60vw);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.voice-note > svg {
+  flex: 0 0 auto;
+  color: #8ea9ff;
+}
+.voice-note audio {
+  width: 240px;
+  max-width: 100%;
+  height: 36px;
+}
+.voice-note > span {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+@keyframes recording-pulse {
+  50% { box-shadow: 0 0 0 9px rgba(230, 79, 100, 0.06); }
+}
 .selected-file {
   display: inline-flex;
   align-items: center;
