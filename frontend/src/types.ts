@@ -37,7 +37,7 @@ export interface MessageReceipt {
 
 export type ChatTarget =
   | { kind: 'direct'; id: number; name: string; online: boolean; lastSeen?: string | null }
-  | { kind: 'group'; id: number; name: string; memberCount: number }
+  | { kind: 'group'; id: number; name: string; memberCount: number; creatorId: number }
 
 export type CallKind = 'audio' | 'video'
 

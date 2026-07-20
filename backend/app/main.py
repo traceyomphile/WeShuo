@@ -132,6 +132,24 @@ def users(search: str = Query("", max_length=50), user=Depends(get_current_user)
     return [{**dict(row), "online": manager.is_online(row["id"])} for row in rows]
 
 
+@app.get("/api/conversations")
+def direct_conversations(user=Depends(get_current_user)):
+    with database() as connection:
+        rows = connection.execute(
+            """SELECT u.id, u.username, u.last_seen, MAX(m.id) AS latest_message_id
+               FROM users u
+               JOIN messages m ON m.group_id IS NULL AND (
+                   (m.sender_id=? AND m.recipient_id=u.id) OR
+                   (m.recipient_id=? AND m.sender_id=u.id)
+               )
+               WHERE u.id != ?
+               GROUP BY u.id, u.username, u.last_seen
+               ORDER BY latest_message_id DESC""",
+            (user["id"], user["id"], user["id"]),
+        ).fetchall()
+    return [{**dict(row), "online": manager.is_online(row["id"])} for row in rows]
+
+
 @app.get("/api/messages/direct/{username}")
 def direct_history(username: str, after_id: int = 0, limit: int = Query(100, ge=1, le=500), user=Depends(get_current_user)):
     with database() as connection:
@@ -251,6 +269,20 @@ def create_group(body: GroupCreate, user=Depends(get_current_user)):
     return {"id": group_id, "name": name, "creator_id": user["id"], "members": len(member_ids)}
 
 
+@app.get("/api/groups/{group_id}/members")
+def group_members(group_id: int, user=Depends(get_current_user)):
+    with database() as connection:
+        group = require_group_member(connection, group_id, user["id"])
+        rows = connection.execute(
+            """SELECT u.id, u.username, u.created_at, u.last_seen
+               FROM users u JOIN group_members gm ON gm.user_id=u.id
+               WHERE gm.group_id=?
+               ORDER BY CASE WHEN u.id=? THEN 0 ELSE 1 END, u.username""",
+            (group_id, group["creator_id"]),
+        ).fetchall()
+    return [{**dict(row), "online": manager.is_online(row["id"])} for row in rows]
+
+
 @app.get("/api/groups/{group_id}/messages")
 def group_history(group_id: int, after_id: int = 0, limit: int = Query(100, ge=1, le=500), user=Depends(get_current_user)):
     with database() as connection:
@@ -283,7 +315,7 @@ async def send_group(group_id: int, body: GroupMessageCreate, user=Depends(get_c
 
 
 @app.post("/api/groups/{group_id}/members", status_code=201)
-def add_member(group_id: int, body: MemberCreate, user=Depends(get_current_user)):
+async def add_member(group_id: int, body: MemberCreate, user=Depends(get_current_user)):
     with write_lock, database() as connection:
         group = require_group_member(connection, group_id, user["id"])
         if group["creator_id"] != user["id"]:
@@ -291,12 +323,29 @@ def add_member(group_id: int, body: MemberCreate, user=Depends(get_current_user)
         member = user_by_username(connection, body.username)
         if member is None:
             raise HTTPException(status_code=404, detail="User not found")
-        connection.execute(
+        cursor = connection.execute(
             "INSERT OR IGNORE INTO group_members(group_id,user_id,joined_at) VALUES(?,?,?)",
             (group_id, member["id"], utc_now()),
         )
         connection.commit()
-    return {"group_id": group_id, "username": member["username"]}
+        member_count = connection.execute(
+            "SELECT COUNT(*) FROM group_members WHERE group_id=?", (group_id,)
+        ).fetchone()[0]
+        member_ids = [row[0] for row in connection.execute(
+            "SELECT user_id FROM group_members WHERE group_id=?", (group_id,)
+        ).fetchall()]
+    if cursor.rowcount:
+        await manager.send(member["id"], {
+            "type": "group_added",
+            "data": {"group_id": group_id, "member_count": member_count},
+        })
+        for member_id in member_ids:
+            if member_id != member["id"]:
+                await manager.send(member_id, {
+                    "type": "group_members_changed",
+                    "data": {"group_id": group_id, "member_count": member_count},
+                })
+    return {"group_id": group_id, "username": member["username"], "member_count": member_count}
 
 
 @app.delete("/api/groups/{group_id}/members/me", status_code=204)
@@ -307,6 +356,42 @@ def leave_group(group_id: int, user=Depends(get_current_user)):
             raise HTTPException(status_code=409, detail="The creator cannot leave; delete or transfer the group")
         connection.execute("DELETE FROM group_members WHERE group_id=? AND user_id=?", (group_id, user["id"]))
         connection.commit()
+
+
+@app.delete("/api/groups/{group_id}/members/{username}")
+async def remove_group_member(group_id: int, username: str, user=Depends(get_current_user)):
+    with write_lock, database() as connection:
+        group = require_group_member(connection, group_id, user["id"])
+        if group["creator_id"] != user["id"]:
+            raise HTTPException(status_code=403, detail="Only the group creator can remove members")
+        member = user_by_username(connection, username)
+        if member is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if member["id"] == group["creator_id"]:
+            raise HTTPException(status_code=409, detail="The group creator cannot be removed")
+        cursor = connection.execute(
+            "DELETE FROM group_members WHERE group_id=? AND user_id=?",
+            (group_id, member["id"]),
+        )
+        if not cursor.rowcount:
+            raise HTTPException(status_code=404, detail="User is not a group member")
+        connection.commit()
+        member_count = connection.execute(
+            "SELECT COUNT(*) FROM group_members WHERE group_id=?", (group_id,)
+        ).fetchone()[0]
+        remaining_ids = [row[0] for row in connection.execute(
+            "SELECT user_id FROM group_members WHERE group_id=?", (group_id,)
+        ).fetchall()]
+    await manager.send(member["id"], {
+        "type": "group_removed",
+        "data": {"group_id": group_id},
+    })
+    for member_id in remaining_ids:
+        await manager.send(member_id, {
+            "type": "group_members_changed",
+            "data": {"group_id": group_id, "member_count": member_count},
+        })
+    return {"group_id": group_id, "username": member["username"], "member_count": member_count}
 
 
 @app.post("/api/media", status_code=201)

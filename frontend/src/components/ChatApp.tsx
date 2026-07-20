@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SubmitEvent } from 'react'
 import {
   ArrowDownToLine, ArrowLeft, Check, CheckCheck, Hash, LogOut, Menu, MessageCircleMore,
-  Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Smile, Square, UsersRound, Video, X,
+  Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Smile, Square, UserMinus, UserPlus, UserRoundCog, UsersRound, Video, X,
 } from 'lucide-react'
 import { api, socketUrl } from '../api'
 import { errorMessage } from '../utils/errors'
@@ -11,6 +11,7 @@ import type { AuthUser, ChatTarget, Group, Message, MessageReceipt, SocketEvent,
 import CallOverlay from './CallOverlay'
 
 interface Props { token: string; currentUser: AuthUser; onLogout: () => void }
+type GroupTarget = Extract<ChatTarget, { kind: 'group' }>
 
 function avatar(name: string) { return name.slice(0, 2).toUpperCase() }
 function chatKey(chat: ChatTarget) { return `${chat.kind}:${chat.id}` }
@@ -22,7 +23,10 @@ function displayTime(value: string) {
 }
 
 export default function ChatApp({ token, currentUser, onLogout }: Props) {
-  const [users, setUsers] = useState<User[]>([])
+  const [conversations, setConversations] = useState<User[]>([])
+  const [searchResults, setSearchResults] = useState<User[]>([])
+  const [groupCandidates, setGroupCandidates] = useState<User[]>([])
+  const [searching, setSearching] = useState(false)
   const [groups, setGroups] = useState<Group[]>([])
   const [selected, setSelected] = useState<ChatTarget | null>(null)
   const selectedRef = useRef<ChatTarget | null>(null)
@@ -39,6 +43,7 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
   const [showMobileSidebar, setShowMobileSidebar] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [showGroupModal, setShowGroupModal] = useState(false)
+  const [manageGroup, setManageGroup] = useState<GroupTarget | null>(null)
   const [toast, setToast] = useState('')
   const socketRef = useRef<WebSocket | null>(null)
   const usersRef = useRef<User[]>([])
@@ -51,7 +56,7 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
   const signalHandler = useRef<(event: SocketEvent) => void>(() => {})
 
   useEffect(() => { selectedRef.current = selected }, [selected])
-  useEffect(() => { usersRef.current = users }, [users])
+  useEffect(() => { usersRef.current = groupCandidates }, [groupCandidates])
   useEffect(() => {
     const markVisibleConversationSeen = () => {
       const chat = selectedRef.current
@@ -94,23 +99,56 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
   }, [calls.handleSignal]);
   
 
-  const loadContacts = useCallback(async (query = '') => {
+  const loadContacts = useCallback(async () => {
     try {
-      const [people, rooms] = await Promise.all([api.users(token, query), api.groups(token)])
-      setUsers(people)
+      const [people, rooms, candidates] = await Promise.all([
+        api.conversations(token),
+        api.groups(token),
+        api.users(token),
+      ])
+      setConversations(people)
       setGroups(rooms)
+      setGroupCandidates(candidates)
     } catch (error) { setToast(errorMessage(error)) }
   }, [token])
 
   useEffect(() => {
-    const id = window.setTimeout(() => loadContacts(search), 250)
-    return () => window.clearTimeout(id)
-  }, [loadContacts, search])
+    const timeout = window.setTimeout(() => { void loadContacts() }, 0)
+    const interval = window.setInterval(loadContacts, 30_000)
+    return () => {
+      window.clearTimeout(timeout)
+      window.clearInterval(interval)
+    }
+  }, [loadContacts])
 
   useEffect(() => {
-    const interval = window.setInterval(() => loadContacts(search), 30_000)
-    return () => window.clearInterval(interval)
-  }, [loadContacts, search])
+    const query = search.trim()
+    let cancelled = false
+    const timeout = window.setTimeout(async () => {
+      if (cancelled) return
+
+      if (!query) {
+        setSearchResults([])
+        setSearching(false)
+        return
+      }
+
+      setSearching(true)
+      try {
+        const results = await api.users(token, query)
+        if (!cancelled) setSearchResults(results)
+      } catch (error) {
+        if (!cancelled) setToast(errorMessage(error))
+      } finally {
+        if (!cancelled) setSearching(false)
+      }
+    }, query ? 250 : 0)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeout)
+    }
+  }, [search, token])
 
   useEffect(() => {
     let reconnectTimer = 0
@@ -142,6 +180,24 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
           )))
           return
         }
+        if (event.type === 'group_added' || event.type === 'group_members_changed' || event.type === 'group_removed') {
+          const groupEvent = event.data as { group_id: number; member_count?: number }
+          if (event.type === 'group_removed') {
+            setGroups(previous => previous.filter(group => group.id !== groupEvent.group_id))
+            setManageGroup(current => current?.id === groupEvent.group_id ? null : current)
+            if (selectedRef.current?.kind === 'group' && selectedRef.current.id === groupEvent.group_id) {
+              selectedRef.current = null
+              setSelected(null)
+              setMessages([])
+            }
+          } else if (groupEvent.member_count !== undefined) {
+            setGroups(previous => previous.map(group => group.id === groupEvent.group_id ? { ...group, member_count: groupEvent.member_count! } : group))
+            setSelected(current => current?.kind === 'group' && current.id === groupEvent.group_id ? { ...current, memberCount: groupEvent.member_count! } : current)
+            setManageGroup(current => current?.id === groupEvent.group_id ? { ...current, memberCount: groupEvent.member_count! } : current)
+          }
+          void loadContacts()
+          return
+        }
         if (event.type !== 'message') return
         const message = event.data as Message
         const active = selectedRef.current
@@ -156,22 +212,23 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
             active.kind === 'direct' &&
             message.sender === active.name
           ) void api.markDirectSeen(token, active.name).catch(() => {})
-        }
-        else {
+        } else {
           const sender = usersRef.current.find(item => item.username === message.sender)
           const key = message.group_id ? `group:${message.group_id}` : `direct:${sender?.id ?? message.sender}`
           setUnread(previous => ({ ...previous, [key]: (previous[key] ?? 0) + 1 }))
         }
+        void loadContacts()
       }
     }
     connect()
     return () => { closed = true; window.clearTimeout(reconnectTimer); socketRef.current?.close() }
-  }, [token])
+  }, [currentUser.username, loadContacts, token])
 
   async function selectChat(chat: ChatTarget) {
     cancelVoiceRecording()
     selectedRef.current = chat
     setSelected(chat)
+    setSearch('')
     setShowMobileSidebar(false)
     setUnread(previous => ({ ...previous, [chatKey(chat)]: 0 }))
     setLoadingChat(true)
@@ -201,6 +258,7 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
       ))
       setText('')
       setFile(null)
+      void loadContacts()
       if (fileInput.current) fileInput.current.value = ''
     } catch (error) { setToast(errorMessage(error)) }
     finally { setSending(false) }
@@ -238,6 +296,7 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
         ? await api.sendDirect(token, chat.name, VOICE_NOTE_CONTENT, mediaId)
         : await api.sendGroup(token, chat.id, VOICE_NOTE_CONTENT, mediaId)
       setMessages(previous => previous.some(item => item.id === message.id) ? previous : [...previous, message])
+      void loadContacts()
     } catch (error) { setToast(errorMessage(error)) }
     finally { setSending(false) }
   }
@@ -334,11 +393,11 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
           <div><strong>W3SHUŌ</strong><small><i className={socketOnline ? 'online' : ''} />{socketOnline ? 'Connected' : 'Reconnecting…'}</small></div>
           <button className="icon-button" onClick={onLogout} title="Log out"><LogOut size={18} /></button>
         </header>
-        <div className="search-box"><Search size={17} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search people" /></div>
+        <div className="search-box"><Search size={17} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by username" /></div>
         <div className="sidebar-scroll">
-          <div className="section-title"><span>MESSAGES</span><span>{users.length}</span></div>
+          <div className="section-title"><span>{search.trim() ? 'SEARCH RESULTS' : 'MESSAGES'}</span><span>{search.trim() ? searchResults.length : conversations.length}</span></div>
           <div className="chat-list">
-            {users.map(user => {
+            {(search.trim() ? searchResults : conversations).map(user => {
               const target: ChatTarget = { kind: 'direct', id: user.id, name: user.username, online: user.online, lastSeen: user.last_seen }
               const count = unread[chatKey(target)] ?? 0
               return <button key={user.id} className={selected?.kind === 'direct' && selected.id === user.id ? 'active' : ''} onClick={() => selectChat(target)}>
@@ -347,12 +406,14 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
                 {count > 0 && <b className="unread">{count}</b>}
               </button>
             })}
-            {!users.length && <p className="empty-list">No people found.</p>}
+            {search.trim() && searching && <p className="empty-list">Searching…</p>}
+            {search.trim() && !searching && !searchResults.length && <p className="empty-list">No users found.</p>}
+            {!search.trim() && !conversations.length && <p className="empty-list">No conversations yet. Search for someone to get started.</p>}
           </div>
           <div className="section-title"><span>GROUPS</span><button onClick={() => setShowGroupModal(true)} title="Create group"><Plus size={15} /></button></div>
           <div className="chat-list">
             {groups.map(group => {
-              const target: ChatTarget = { kind: 'group', id: group.id, name: group.name, memberCount: group.member_count }
+              const target: ChatTarget = { kind: 'group', id: group.id, name: group.name, memberCount: group.member_count, creatorId: group.creator_id }
               const count = unread[chatKey(target)] ?? 0
               return <button key={group.id} className={selected?.kind === 'group' && selected.id === group.id ? 'active' : ''} onClick={() => selectChat(target)}>
                 <span className="avatar group"><Hash size={20} /></span>
@@ -372,6 +433,7 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
             <span className={`avatar ${selected.kind === 'group' ? 'group' : ''}`}>{selected.kind === 'group' ? <UsersRound size={20} /> : avatar(selected.name)}{selected.kind === 'direct' && <i className={selected.online ? 'online' : ''} />}</span>
             <div><strong>{selected.name}</strong><small>{selected.kind === 'group' ? `${selected.memberCount} members` : selected.online ? 'Online now' : 'Offline'}</small></div>
             <span className="header-spacer" />
+            {selected.kind === 'group' && <button className="icon-button" onClick={() => setManageGroup(selected)} aria-label="Manage group members" title="Group members"><UserRoundCog size={20} /></button>}
             {selected.kind === 'direct' && <>
               <button className="icon-button" disabled={!selected.online} onClick={() => calls.startCall(selected.name, 'audio')} aria-label="Audio call" title={selected.online ? 'Audio call' : 'User is offline'}><Phone size={19} /></button>
               <button className="icon-button" disabled={!selected.online} onClick={() => calls.startCall(selected.name, 'video')} aria-label="Video call" title={selected.online ? 'Video call' : 'User is offline'}><Video size={20} /></button>
@@ -414,7 +476,21 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
         </>}
       </section>
 
-      {showGroupModal && <CreateGroupModal users={users} token={token} onClose={() => setShowGroupModal(false)} onCreated={() => { setShowGroupModal(false); loadContacts(search) }} onError={setToast} />}
+      {showGroupModal && <CreateGroupModal users={groupCandidates} token={token} onClose={() => setShowGroupModal(false)} onCreated={() => { setShowGroupModal(false); void loadContacts() }} onError={setToast} />}
+      {manageGroup && <ManageGroupMembersModal
+        group={manageGroup}
+        currentUser={currentUser}
+        candidates={groupCandidates}
+        token={token}
+        onClose={() => setManageGroup(null)}
+        onChanged={memberCount => {
+          setGroups(previous => previous.map(group => group.id === manageGroup.id ? { ...group, member_count: memberCount } : group))
+          setSelected(current => current?.kind === 'group' && current.id === manageGroup.id ? { ...current, memberCount } : current)
+          setManageGroup(current => current ? { ...current, memberCount } : current)
+          void loadContacts()
+        }}
+        onError={setToast}
+      />}
       {calls.call && <CallOverlay call={calls.call} localStream={calls.localStream} remoteStream={calls.remoteStream} onAccept={calls.acceptCall} onReject={calls.rejectCall} onEnd={calls.endCall} />}
       {toast && <div className="toast" role="status">{toast}<button onClick={() => setToast('')}><X size={15} /></button></div>}
     </main>
@@ -469,6 +545,87 @@ function VoiceNotePlayer({ token, mediaId, onError }: { token: string; mediaId: 
   }, [mediaId, onError, token])
 
   return <div className="voice-note"><Mic size={18} />{source ? <audio controls preload="metadata" src={source} /> : <span>Loading voice note…</span>}</div>
+}
+
+function ManageGroupMembersModal({ group, currentUser, candidates, token, onClose, onChanged, onError }: {
+  group: GroupTarget
+  currentUser: AuthUser
+  candidates: User[]
+  token: string
+  onClose: () => void
+  onChanged: (memberCount: number) => void
+  onError: (text: string) => void
+}) {
+  const [members, setMembers] = useState<User[]>([])
+  const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [busyUser, setBusyUser] = useState('')
+  const canManage = currentUser.id === group.creatorId
+
+  const refreshMembers = useCallback(async () => {
+    setLoading(true)
+    try { setMembers(await api.groupMembers(token, group.id)) }
+    catch (error) { onError(errorMessage(error)) }
+    finally { setLoading(false) }
+  }, [group.id, onError, token])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void refreshMembers() }, 0)
+    return () => { window.clearTimeout(timer) }
+  }, [refreshMembers])
+
+  const memberNames = new Set(members.map(member => member.username.toLowerCase()))
+  const available = candidates.filter(candidate => (
+    !memberNames.has(candidate.username.toLowerCase()) &&
+    candidate.username.toLowerCase().includes(query.trim().toLowerCase())
+  ))
+
+  async function addMember(user: User) {
+    setBusyUser(user.username)
+    try {
+      const result = await api.addGroupMember(token, group.id, user.username)
+      await refreshMembers()
+      onChanged(result.member_count)
+      setQuery('')
+    } catch (error) { onError(errorMessage(error)) }
+    finally { setBusyUser('') }
+  }
+
+  async function removeMember(user: User) {
+    setBusyUser(user.username)
+    try {
+      const result = await api.removeGroupMember(token, group.id, user.username)
+      setMembers(current => current.filter(member => member.id !== user.id))
+      onChanged(result.member_count)
+    } catch (error) { onError(errorMessage(error)) }
+    finally { setBusyUser('') }
+  }
+
+  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <section className="modal-card manage-members" role="dialog" aria-modal="true" aria-label={`Members of ${group.name}`}>
+      <header><div><p className="eyebrow">GROUP SETTINGS</p><h2>{group.name}</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X size={20} /></button></header>
+      <div className="member-heading"><span>Current members</span><b>{members.length}</b></div>
+      <div className="group-member-list">
+        {loading ? <p className="empty-list">Loading members…</p> : members.map(member => <div className="group-member-row" key={member.id}>
+          <span className="avatar">{avatar(member.username)}<i className={member.online ? 'online' : ''} /></span>
+          <span><strong>{member.username}</strong><small>{member.id === group.creatorId ? 'Group creator' : member.online ? 'Online' : 'Offline'}</small></span>
+          {canManage && member.id !== group.creatorId && <button type="button" className="member-action remove" disabled={busyUser === member.username} onClick={() => removeMember(member)} aria-label={`Remove ${member.username}`} title="Remove member"><UserMinus size={17} /></button>}
+        </div>)}
+      </div>
+      {canManage ? <>
+        <label htmlFor="memberSearch">Add a member</label>
+        <div className="member-search"><Search size={16} /><input id="memberSearch" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search by username" /></div>
+        <div className="group-member-list available-members">
+          {available.map(user => <div className="group-member-row" key={user.id}>
+            <span className="avatar">{avatar(user.username)}<i className={user.online ? 'online' : ''} /></span>
+            <span><strong>{user.username}</strong><small>{user.online ? 'Online' : 'Offline'}</small></span>
+            <button type="button" className="member-action add" disabled={Boolean(busyUser)} onClick={() => addMember(user)} aria-label={`Add ${user.username}`} title="Add member"><UserPlus size={17} /></button>
+          </div>)}
+          {!available.length && <p className="empty-list">{query ? 'No matching users available.' : 'Everyone is already in this group.'}</p>}
+        </div>
+      </> : <p className="member-note">Only the group creator can add or remove members.</p>}
+    </section>
+  </div>
 }
 
 function MessageTicks({ status }: { status: Message['delivery_status'] }) {
