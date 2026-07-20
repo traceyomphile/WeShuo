@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode, SubmitEvent } from 'react'
 import {
-  ArrowDownToLine, ArrowLeft, Camera, Check, CheckCheck, Crown, Hash, LogOut, Menu, MessageCircleMore,
+  ArrowDownToLine, ArrowLeft, Camera, Check, CheckCheck, Clock3, Crown, Eye, EyeOff, Hash, KeyRound, LogOut, Menu, MessageCircleMore,
   Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Shield, ShieldOff, Smile, Square, UserMinus, UserPlus, UsersRound, Video, X,
 } from 'lucide-react'
 import { api, socketUrl } from '../api'
@@ -10,7 +10,7 @@ import { useWebRTC } from '../hooks/useWebRTC'
 import type { AuthUser, ChatTarget, Group, GroupMember, Message, MessageReceipt, SocketEvent, User } from '../types'
 import CallOverlay from './CallOverlay'
 
-interface Props { token: string; currentUser: AuthUser; onLogout: () => void }
+interface Props { token: string; currentUser: AuthUser; onLogout: () => void; onSessionUpdated: (token: string, user: AuthUser) => void }
 type GroupTarget = Extract<ChatTarget, { kind: 'group' }>
 
 function avatar(name: string) { return name.slice(0, 2).toUpperCase() }
@@ -29,9 +29,9 @@ function groupTarget(group: Group): GroupTarget {
 }
 const VOICE_NOTE_CONTENT = '🎤 Voice note'
 const RECEIPT_RANK = { sent: 0, delivered: 1, seen: 2 } as const
-function displayTime(value: string) {
+function displayTime(value: string, timeFormat: '12' | '24') {
   const date = new Date(value)
-  return Number.isNaN(date.valueOf()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return Number.isNaN(date.valueOf()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: timeFormat === '12' })
 }
 
 function calendarDay(value: string) {
@@ -55,7 +55,7 @@ function displayMessageDate(value: string) {
   })
 }
 
-export default function ChatApp({ token, currentUser, onLogout }: Props) {
+export default function ChatApp({ token, currentUser, onLogout, onSessionUpdated }: Props) {
   const [conversations, setConversations] = useState<User[]>([])
   const [searchResults, setSearchResults] = useState<User[]>([])
   const [groupCandidates, setGroupCandidates] = useState<User[]>([])
@@ -77,6 +77,7 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [showGroupModal, setShowGroupModal] = useState(false)
   const [manageGroup, setManageGroup] = useState<GroupTarget | null>(null)
+  const [showAccountSettings, setShowAccountSettings] = useState(false)
   const [toast, setToast] = useState('')
   const socketRef = useRef<WebSocket | null>(null)
   const usersRef = useRef<User[]>([])
@@ -142,16 +143,6 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
       setConversations(people)
       setGroups(rooms)
       setGroupCandidates(candidates)
-      setSelected(current => {
-        if (current?.kind !== 'group') return current
-        const latest = rooms.find(group => group.id === current.id)
-        return latest ? groupTarget(latest) : current
-      })
-      setManageGroup(current => {
-        if (!current) return null
-        const latest = rooms.find(group => group.id === current.id)
-        return latest ? groupTarget(latest) : current
-      })
     } catch (error) { setToast(errorMessage(error)) }
   }, [token])
 
@@ -163,6 +154,19 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
       window.clearInterval(interval)
     }
   }, [loadContacts])
+
+  useEffect(() => {
+    const syncGroup = (current: ChatTarget | null) => {
+      if (current?.kind !== 'group') return current
+      const latest = groups.find(group => group.id === current.id)
+      return latest ? groupTarget(latest) : current
+    }
+    const timeout = window.setTimeout(() => {
+      setSelected(syncGroup)
+      setManageGroup(current => syncGroup(current) as GroupTarget | null)
+    }, 0)
+    return () => window.clearTimeout(timeout)
+  }, [groups])
 
   useEffect(() => {
     const query = search.trim()
@@ -456,10 +460,10 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
           <div className="section-title"><span>{search.trim() ? 'SEARCH RESULTS' : 'MESSAGES'}</span><span>{search.trim() ? searchResults.length : conversations.length}</span></div>
           <div className="chat-list">
             {(search.trim() ? searchResults : conversations).map(user => {
-              const target: ChatTarget = { kind: 'direct', id: user.id, name: user.username, online: user.online, lastSeen: user.last_seen }
+              const target: ChatTarget = { kind: 'direct', id: user.id, name: user.username, online: user.online, lastSeen: user.last_seen, profileMediaId: user.profile_media_id }
               const count = unread[chatKey(target)] ?? 0
               return <button key={user.id} className={selected?.kind === 'direct' && selected.id === user.id ? 'active' : ''} onClick={() => selectChat(target)}>
-                <span className="avatar">{avatar(user.username)}<i className={user.online ? 'online' : ''} /></span>
+                <span className="avatar"><GroupPicture token={token} mediaId={user.profile_media_id ?? null} fallback={avatar(user.username)} /><i className={user.online ? 'online' : ''} /></span>
                 <span className="chat-label"><strong>{user.username}</strong><small>{user.online ? 'Online' : user.last_seen ? 'Offline' : 'Start a conversation'}</small></span>
                 {count > 0 && <b className="unread">{count}</b>}
               </button>
@@ -481,14 +485,18 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
             })}
           </div>
         </div>
-        <footer className="profile-card"><span className="avatar">{avatar(currentUser.username)}<i className="online" /></span><span><strong>{currentUser.username}</strong><small>Available</small></span><MoreVertical size={18} /></footer>
+        <footer className="profile-card">
+          <span className="avatar"><GroupPicture token={token} mediaId={currentUser.profile_media_id ?? null} fallback={avatar(currentUser.username)} /><i className="online" /></span>
+          <span><strong>{currentUser.username}</strong><small>Available</small></span>
+          <button type="button" className="profile-menu-button" onClick={() => setShowAccountSettings(true)} aria-label="Open account settings" title="Account settings"><MoreVertical size={18} /></button>
+        </footer>
       </aside>
 
       <section className={`conversation ${selected ? 'has-chat' : ''}`}>
         {!selected ? <EmptyChat onOpenSidebar={() => setShowMobileSidebar(true)} /> : <>
           <header className="conversation-header">
             <button className="mobile-back" onClick={() => setShowMobileSidebar(true)}><ArrowLeft size={20} /></button>
-            <span className={`avatar ${selected.kind === 'group' ? 'group' : ''}`}>{selected.kind === 'group' ? <GroupPicture token={token} mediaId={selected.profileMediaId} fallback={<UsersRound size={20} />} /> : avatar(selected.name)}{selected.kind === 'direct' && <i className={selected.online ? 'online' : ''} />}</span>
+            <span className={`avatar ${selected.kind === 'group' ? 'group' : ''}`}>{selected.kind === 'group' ? <GroupPicture token={token} mediaId={selected.profileMediaId} fallback={<UsersRound size={20} />} /> : <GroupPicture token={token} mediaId={selected.profileMediaId ?? null} fallback={avatar(selected.name)} />}{selected.kind === 'direct' && <i className={selected.online ? 'online' : ''} />}</span>
             <div><strong>{selected.name}</strong><small>{selected.kind === 'group' ? selected.description || `${selected.memberCount} members` : selected.online ? 'Online now' : 'Offline'}</small></div>
             <span className="header-spacer" />
             {selected.kind === 'group' && <button className="icon-button" onClick={() => setManageGroup(selected)} aria-label="Open group menu" title="Group menu"><MoreVertical size={20} /></button>}
@@ -516,7 +524,7 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
                         ? <VoiceNotePlayer token={token} mediaId={message.media_id} onError={setToast} />
                         : <>{message.content && <p>{message.content}</p>}{message.media_id && <button className="attachment" onClick={() => downloadAttachment(message.media_id!)}><ArrowDownToLine size={18} /><span><strong>Attachment</strong><small>Click to download</small></span></button>}</>}
                       <div className="message-meta">
-                        <time>{displayTime(message.created_at)}</time>
+                        <time>{displayTime(message.created_at, currentUser.time_format ?? '12')}</time>
                         {mine && <MessageTicks status={selected.kind === 'direct' ? message.delivery_status ?? 'sent' : 'sent'} />}
                       </div>
                     </div></div>
@@ -564,6 +572,13 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
           void loadContacts()
         }}
         onError={setToast}
+      />}
+      {showAccountSettings && <AccountSettingsModal
+        token={token}
+        currentUser={currentUser}
+        onClose={() => setShowAccountSettings(false)}
+        onSessionUpdated={onSessionUpdated}
+        onNotice={setToast}
       />}
       {calls.call && <CallOverlay call={calls.call} localStream={calls.localStream} remoteStream={calls.remoteStream} onAccept={calls.acceptCall} onReject={calls.rejectCall} onEnd={calls.endCall} />}
       {toast && <div className="toast" role="status">{toast}<button onClick={() => setToast('')}><X size={15} /></button></div>}
@@ -627,7 +642,7 @@ function GroupPicture({ token, mediaId, fallback, onError }: {
   fallback: ReactNode
   onError?: (text: string) => void
 }) {
-  const [source, setSource] = useState<{ mediaId: number | null; url: string }>({ mediaId: null, url: '' })
+  const [source, setSource] = useState('')
 
   useEffect(() => {
     let objectUrl = ''
@@ -636,7 +651,7 @@ function GroupPicture({ token, mediaId, fallback, onError }: {
     api.download(token, mediaId).then(({ blob }) => {
       if (cancelled) return
       objectUrl = URL.createObjectURL(blob)
-      setSource({ mediaId, url: objectUrl })
+      setSource(objectUrl)
     }).catch(error => { if (!cancelled) onError?.(errorMessage(error)) })
     return () => {
       cancelled = true
@@ -644,8 +659,126 @@ function GroupPicture({ token, mediaId, fallback, onError }: {
     }
   }, [mediaId, onError, token])
 
-  const currentSource = source.mediaId === mediaId ? source.url : ''
-  return currentSource ? <img className="group-picture" src={currentSource} alt="" /> : <>{fallback}</>
+  return source ? <img className="group-picture" src={source} alt="" /> : <>{fallback}</>
+}
+
+function AccountSettingsModal({ token, currentUser, onClose, onSessionUpdated, onNotice }: {
+  token: string
+  currentUser: AuthUser
+  onClose: () => void
+  onSessionUpdated: (token: string, user: AuthUser) => void
+  onNotice: (text: string) => void
+}) {
+  const [username, setUsername] = useState(currentUser.username)
+  const [dateOfBirth, setDateOfBirth] = useState(currentUser.date_of_birth ?? '')
+  const [timeFormat, setTimeFormat] = useState<'12' | '24'>(currentUser.time_format ?? '12')
+  const [picture, setPicture] = useState<File | null>(null)
+  const [removePicture, setRemovePicture] = useState(false)
+  const [usernamePassword, setUsernamePassword] = useState('')
+  const [showUsernamePassword, setShowUsernamePassword] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false)
+  const [showNewPassword, setShowNewPassword] = useState(false)
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [savingPassword, setSavingPassword] = useState(false)
+  const usernameChanged = username.trim() !== currentUser.username
+  const today = new Date().toISOString().slice(0, 10)
+
+  async function saveProfile(event: SubmitEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (savingProfile) return
+    setSavingProfile(true)
+    try {
+      let profileMediaId: number | null | undefined
+      if (picture) {
+        if (!picture.type.startsWith('image/')) throw new Error('Profile picture must be an image.')
+        profileMediaId = (await api.upload(token, picture)).id
+      } else if (removePicture) {
+        profileMediaId = null
+      }
+      const result = await api.updateAccount(token, {
+        username: username.trim(),
+        date_of_birth: dateOfBirth || null,
+        time_format: timeFormat,
+        ...(usernameChanged ? { current_password: usernamePassword } : {}),
+        ...(profileMediaId !== undefined ? { profile_media_id: profileMediaId } : {}),
+      })
+      setPicture(null)
+      setRemovePicture(false)
+      setUsernamePassword('')
+      onSessionUpdated(result.access_token, result.user)
+      onNotice('Account settings saved.')
+    } catch (error) { onNotice(errorMessage(error)) }
+    finally { setSavingProfile(false) }
+  }
+
+  async function savePassword(event: SubmitEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (savingPassword) return
+    if (newPassword !== confirmPassword) {
+      onNotice('New passwords do not match.')
+      return
+    }
+    setSavingPassword(true)
+    try {
+      await api.changePassword(token, currentPassword, newPassword)
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      onNotice('Password changed successfully.')
+    } catch (error) { onNotice(errorMessage(error)) }
+    finally { setSavingPassword(false) }
+  }
+
+  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <section className="modal-card account-settings" role="dialog" aria-modal="true" aria-label="Account settings">
+      <header><div><p className="eyebrow">YOUR ACCOUNT</p><h2>Settings</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Close settings"><X size={20} /></button></header>
+
+      <form className="settings-section" onSubmit={saveProfile}>
+        <div className="settings-section-title"><div><strong>Profile & privacy</strong><small>Your date of birth stays private.</small></div></div>
+        <div className="account-photo-row">
+          <span className="group-photo-preview"><GroupPicture token={token} mediaId={removePicture ? null : currentUser.profile_media_id ?? null} fallback={avatar(currentUser.username)} onError={onNotice} /></span>
+          <div><strong>Profile picture</strong><small>{picture ? picture.name : currentUser.profile_media_id && !removePicture ? 'Current picture' : 'No picture selected'}</small></div>
+          <label className="photo-action"><Camera size={17} /><span>Choose</span><input type="file" accept="image/*" onChange={event => { setPicture(event.target.files?.[0] ?? null); setRemovePicture(false) }} /></label>
+          {currentUser.profile_media_id && !removePicture && <button type="button" className="text-action danger" onClick={() => { setPicture(null); setRemovePicture(true) }}>Remove</button>}
+        </div>
+
+        <div className="settings-grid">
+          <label htmlFor="accountUsername">Username</label>
+          <input id="accountUsername" value={username} onChange={event => setUsername(event.target.value)} minLength={3} maxLength={30} autoComplete="username" required />
+          <label htmlFor="dateOfBirth">Date of birth</label>
+          <input id="dateOfBirth" type="date" max={today} value={dateOfBirth} onChange={event => setDateOfBirth(event.target.value)} />
+          <label htmlFor="timeFormat"><Clock3 size={15} /> Chat time format</label>
+          <select id="timeFormat" value={timeFormat} onChange={event => setTimeFormat(event.target.value as '12' | '24')}>
+            <option value="12">12-hour — 3:45 PM</option>
+            <option value="24">24-hour — 15:45</option>
+          </select>
+        </div>
+
+        {usernameChanged && <div className="settings-sensitive-field">
+          <label htmlFor="usernameCurrentPassword"><KeyRound size={15} /> Current password to change username</label>
+          <div className="settings-password-field"><input id="usernameCurrentPassword" type={showUsernamePassword ? 'text' : 'password'} value={usernamePassword} onChange={event => setUsernamePassword(event.target.value)} autoComplete="current-password" required /><button type="button" onClick={() => setShowUsernamePassword(value => !value)} aria-label={showUsernamePassword ? 'Hide password' : 'Show password'}>{showUsernamePassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>
+        </div>}
+        <p className="privacy-note">Your birthday is only available in your private account settings. Other users cannot see it.</p>
+        <div className="settings-actions"><button className="primary-button compact" disabled={savingProfile}>{savingProfile ? 'SAVING…' : 'SAVE PROFILE'}</button></div>
+      </form>
+
+      <form className="settings-section password-settings" onSubmit={savePassword}>
+        <div className="settings-section-title"><div><strong>Change password</strong><small>Confirm your current password first.</small></div></div>
+        <div className="password-settings-grid">
+          <label htmlFor="currentAccountPassword">Current password</label>
+          <div className="settings-password-field"><input id="currentAccountPassword" type={showCurrentPassword ? 'text' : 'password'} value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} autoComplete="current-password" required /><button type="button" onClick={() => setShowCurrentPassword(value => !value)} aria-label={showCurrentPassword ? 'Hide current password' : 'Show current password'}>{showCurrentPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>
+          <label htmlFor="newAccountPassword">New password</label>
+          <div className="settings-password-field"><input id="newAccountPassword" type={showNewPassword ? 'text' : 'password'} value={newPassword} onChange={event => setNewPassword(event.target.value)} minLength={8} autoComplete="new-password" required /><button type="button" onClick={() => setShowNewPassword(value => !value)} aria-label={showNewPassword ? 'Hide new passwords' : 'Show new passwords'}>{showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>
+          <label htmlFor="confirmAccountPassword">Confirm new password</label>
+          <input id="confirmAccountPassword" type={showNewPassword ? 'text' : 'password'} value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} minLength={8} autoComplete="new-password" required />
+        </div>
+        <div className="settings-actions"><button className="primary-button compact" disabled={savingPassword}>{savingPassword ? 'CHANGING…' : 'CHANGE PASSWORD'}</button></div>
+      </form>
+    </section>
+  </div>
 }
 
 function ManageGroupMembersModal({ group, currentUser, candidates, token, onClose, onChanged, onError }: {
@@ -668,6 +801,15 @@ function ManageGroupMembersModal({ group, currentUser, candidates, token, onClos
   const [busyUser, setBusyUser] = useState('')
   const isOwner = currentUser.id === group.creatorId
   const isAdmin = group.role === 'admin'
+
+  useEffect(() => {
+    // Defer updates to avoid synchronous setState within the effect body
+    const timer = window.setTimeout(() => {
+      setName(group.name)
+      setDescription(group.description)
+    }, 0)
+    return () => { window.clearTimeout(timer) }
+  }, [group.description, group.name])
 
   const refreshMembers = useCallback(async () => {
     setLoading(true)

@@ -1,9 +1,25 @@
+from datetime import date
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 
 class Credentials(BaseModel):
     username: str = Field(min_length=3, max_length=30)
     password: str = Field(min_length=8, max_length=128)
+
+
+class AccountUpdate(BaseModel):
+    username: str | None = Field(default=None, min_length=3, max_length=30)
+    date_of_birth: date | None = None
+    profile_media_id: int | None = None
+    time_format: Literal["12", "24"] | None = None
+    current_password: str | None = Field(default=None, max_length=128)
+
+
+class PasswordUpdate(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class DirectMessageCreate(BaseModel):

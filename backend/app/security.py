@@ -92,7 +92,8 @@ def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(
     payload = decode_token(credentials.credentials)
     with database() as connection:
         row = connection.execute(
-            "SELECT id, username, created_at, last_seen FROM users WHERE id=?", (payload["sub"],)
+            """SELECT id,username,date_of_birth,profile_media_id,time_format,created_at,last_seen
+               FROM users WHERE id=?""", (payload["sub"],)
         ).fetchone()
     if row is None:
         raise HTTPException(status_code=401, detail="User no longer exists")

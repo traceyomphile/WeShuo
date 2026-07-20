@@ -37,6 +37,12 @@ export const api = {
     method: 'POST', body: JSON.stringify({ username, password }),
   }),
   me: (token: string) => request<AuthUser>('/api/auth/me', {}, token),
+  updateAccount: (token: string, changes: { username?: string; date_of_birth?: string | null; profile_media_id?: number | null; time_format?: '12' | '24'; current_password?: string }) => request<{ access_token: string; user: AuthUser }>('/api/users/me', {
+    method: 'PATCH', body: JSON.stringify(changes),
+  }, token),
+  changePassword: (token: string, currentPassword: string, newPassword: string) => request<void>('/api/users/me/password', {
+    method: 'POST', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  }, token),
   users: (token: string, search = '') => request<User[]>(`/api/users?search=${encodeURIComponent(search)}`, {}, token),
   conversations: (token: string) => request<User[]>('/api/conversations', {}, token),
   groups: (token: string) => request<Group[]>('/api/groups', {}, token),

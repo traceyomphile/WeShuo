@@ -33,6 +33,5 @@ export default function App() {
 
   if (checking) return <div className="boot-screen"><span className="brand-mark">W<span>3</span>SHUŌ</span><i /></div>
   if (!token || !user) return <AuthScreen onAuthenticated={onAuthenticated} />
-  return <ChatApp token={token} currentUser={user} onLogout={logout} />
+  return <ChatApp token={token} currentUser={user} onLogout={logout} onSessionUpdated={onAuthenticated} />
 }
-

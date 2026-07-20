@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 import re
 import secrets
@@ -9,7 +10,7 @@ from fastapi.responses import FileResponse
 
 from .config import settings
 from .database import database, initialise_database, utc_now, write_lock
-from .models import AdminUpdate, Credentials, DirectMessageCreate, GroupCreate, GroupMessageCreate, GroupUpdate, MemberCreate
+from .models import AccountUpdate, AdminUpdate, Credentials, DirectMessageCreate, GroupCreate, GroupMessageCreate, GroupUpdate, MemberCreate, PasswordUpdate
 from .connection_manager import manager
 from .security import (
     USERNAME_PATTERN, create_token, decode_token, get_current_user,
@@ -111,18 +112,20 @@ def register(body: Credentials):
         )
         connection.commit()
         user_id = cursor.lastrowid
-    return {"access_token": create_token(user_id, username), "token_type": "bearer", "user": {"id": user_id, "username": username}}
+    return {"access_token": create_token(user_id, username), "token_type": "bearer", "user": {"id": user_id, "username": username, "date_of_birth": None, "profile_media_id": None, "time_format": "12"}}
 
 
 @app.post("/api/auth/login")
 def login(body: Credentials):
     with database() as connection:
         row = connection.execute(
-            "SELECT id,username,password_hash FROM users WHERE username=?", (body.username.strip(),)
+            """SELECT id,username,password_hash,date_of_birth,profile_media_id,time_format,created_at,last_seen
+               FROM users WHERE username=?""", (body.username.strip(),)
         ).fetchone()
     if row is None or not verify_password(body.password, row["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    return {"access_token": create_token(row["id"], row["username"]), "token_type": "bearer", "user": {"id": row["id"], "username": row["username"]}}
+    login_user = {key: row[key] for key in row.keys() if key != "password_hash"}
+    return {"access_token": create_token(row["id"], row["username"]), "token_type": "bearer", "user": login_user}
 
 
 @app.get("/api/auth/me")
@@ -130,11 +133,90 @@ def me(user=Depends(get_current_user)):
     return user
 
 
+@app.patch("/api/users/me")
+def update_account(body: AccountUpdate, user=Depends(get_current_user)):
+    fields = body.model_fields_set
+    if not fields:
+        raise HTTPException(status_code=422, detail="No account changes were supplied")
+    with write_lock, database() as connection:
+        account = connection.execute(
+            "SELECT password_hash FROM users WHERE id=?", (user["id"],)
+        ).fetchone()
+        updates = []
+        values = []
+        if "username" in fields:
+            username = (body.username or "").strip()
+            if not USERNAME_PATTERN.fullmatch(username):
+                raise HTTPException(status_code=422, detail="Username may contain letters, numbers, _, . and -")
+            if username != user["username"]:
+                if not body.current_password or not verify_password(body.current_password, account["password_hash"]):
+                    raise HTTPException(status_code=403, detail="Current password is required to change your username")
+                if connection.execute(
+                    "SELECT 1 FROM users WHERE username=? AND id != ?", (username, user["id"])
+                ).fetchone():
+                    raise HTTPException(status_code=409, detail="Username already exists")
+                updates.append("username=?")
+                values.append(username)
+        if "date_of_birth" in fields:
+            if body.date_of_birth and body.date_of_birth > date.today():
+                raise HTTPException(status_code=422, detail="Date of birth cannot be in the future")
+            updates.append("date_of_birth=?")
+            values.append(body.date_of_birth.isoformat() if body.date_of_birth else None)
+        if "time_format" in fields:
+            if body.time_format is None:
+                raise HTTPException(status_code=422, detail="Time format must be 12 or 24")
+            updates.append("time_format=?")
+            values.append(body.time_format)
+        if "profile_media_id" in fields:
+            if body.profile_media_id is not None:
+                media = connection.execute(
+                    "SELECT content_type FROM media WHERE id=? AND uploader_id=?",
+                    (body.profile_media_id, user["id"]),
+                ).fetchone()
+                if media is None:
+                    raise HTTPException(status_code=404, detail="Uploaded profile picture not found")
+                if not media["content_type"].startswith("image/"):
+                    raise HTTPException(status_code=422, detail="Profile picture must be an image")
+            updates.append("profile_media_id=?")
+            values.append(body.profile_media_id)
+        if updates:
+            connection.execute(
+                f"UPDATE users SET {', '.join(updates)} WHERE id=?", (*values, user["id"])
+            )
+            connection.commit()
+        updated = dict(connection.execute(
+            """SELECT id,username,date_of_birth,profile_media_id,time_format,created_at,last_seen
+               FROM users WHERE id=?""", (user["id"],)
+        ).fetchone())
+    token = create_token(updated["id"], updated["username"])
+    return {"access_token": token, "token_type": "bearer", "user": updated}
+
+
+@app.post("/api/users/me/password", status_code=204)
+def change_password(body: PasswordUpdate, user=Depends(get_current_user)):
+    with write_lock, database() as connection:
+        account = connection.execute(
+            "SELECT password_hash FROM users WHERE id=?", (user["id"],)
+        ).fetchone()
+        if not verify_password(body.current_password, account["password_hash"]):
+            raise HTTPException(status_code=403, detail="Current password is incorrect")
+        try:
+            validate_password(body.new_password)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error))
+        connection.execute(
+            "UPDATE users SET password_hash=? WHERE id=?",
+            (hash_password(body.new_password), user["id"]),
+        )
+        connection.commit()
+
+
 @app.get("/api/users")
 def users(search: str = Query("", max_length=50), user=Depends(get_current_user)):
     with database() as connection:
         rows = connection.execute(
-            "SELECT id,username,last_seen FROM users WHERE id != ? AND username LIKE ? ORDER BY username LIMIT 100",
+            """SELECT id,username,profile_media_id,last_seen FROM users
+               WHERE id != ? AND username LIKE ? ORDER BY username LIMIT 100""",
             (user["id"], f"%{search}%"),
         ).fetchall()
     return [{**dict(row), "online": manager.is_online(row["id"])} for row in rows]
@@ -144,14 +226,14 @@ def users(search: str = Query("", max_length=50), user=Depends(get_current_user)
 def direct_conversations(user=Depends(get_current_user)):
     with database() as connection:
         rows = connection.execute(
-            """SELECT u.id, u.username, u.last_seen, MAX(m.id) AS latest_message_id
+            """SELECT u.id, u.username, u.profile_media_id, u.last_seen, MAX(m.id) AS latest_message_id
                FROM users u
                JOIN messages m ON m.group_id IS NULL AND (
                    (m.sender_id=? AND m.recipient_id=u.id) OR
                    (m.recipient_id=? AND m.sender_id=u.id)
                )
                WHERE u.id != ?
-               GROUP BY u.id, u.username, u.last_seen
+               GROUP BY u.id, u.username, u.profile_media_id, u.last_seen
                ORDER BY latest_message_id DESC""",
             (user["id"], user["id"], user["id"]),
         ).fetchall()
@@ -347,7 +429,7 @@ def group_members(group_id: int, user=Depends(get_current_user)):
     with database() as connection:
         group = require_group_member(connection, group_id, user["id"])
         rows = connection.execute(
-            """SELECT u.id, u.username, u.created_at, u.last_seen,
+            """SELECT u.id, u.username, u.profile_media_id, u.created_at, u.last_seen,
                       gm.role, gm.joined_at, gm.left_at,
                       CASE WHEN gm.is_active=1 THEN 'current' ELSE 'past' END membership_status
                FROM users u JOIN group_members gm ON gm.user_id=u.id
@@ -618,6 +700,10 @@ def download_media(media_id: int, user=Depends(get_current_user)):
                    JOIN group_members gm ON gm.group_id=g.id AND gm.user_id=? AND gm.is_active=1
                    WHERE g.profile_media_id=? LIMIT 1""",
                 (user["id"], media_id),
+            ).fetchone()
+        if not allowed:
+            allowed = connection.execute(
+                "SELECT 1 FROM users WHERE profile_media_id=? LIMIT 1", (media_id,)
             ).fetchone()
     if not allowed:
         raise HTTPException(status_code=403, detail="You do not have access to this file")

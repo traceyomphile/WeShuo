@@ -639,7 +639,7 @@ textarea:focus-visible {
   .sidebar.collapsed .search-box,
   .sidebar.collapsed .sidebar-scroll,
   .sidebar.collapsed .profile-card > span:nth-child(2),
-  .sidebar.collapsed .profile-card > svg {
+  .sidebar.collapsed .profile-card > .profile-menu-button {
     display: none;
   }
 
@@ -861,8 +861,24 @@ i.online {
   color: var(--muted);
   font-size: 0.68rem;
 }
-.profile-card > svg {
+.profile-menu-button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
   color: #5d708b;
+  background: transparent;
+  cursor: pointer;
+}
+.profile-menu-button:hover,
+.profile-menu-button:focus-visible {
+  color: var(--text);
+  background: #122139;
+  outline: none;
 }
 
 .conversation {
@@ -1362,6 +1378,173 @@ i.online {
 }
 .group-settings {
   width: min(620px, 100%);
+}
+.account-settings {
+  width: min(620px, 100%);
+}
+.settings-section {
+  margin-top: 0.4rem;
+  padding: 1rem 0 1.25rem;
+  border-top: 1px solid var(--line);
+}
+.settings-section + .settings-section {
+  margin-top: 0;
+}
+.settings-section-title {
+  display: flex;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+.settings-section-title > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+.settings-section-title strong {
+  font: 600 1rem "Space Grotesk", sans-serif;
+}
+.settings-section-title small,
+.account-photo-row small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.account-photo-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #07101d;
+}
+.account-photo-row > div {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+.account-photo-row small {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-grid,
+.password-settings-grid,
+.settings-sensitive-field {
+  display: grid;
+  gap: 0.45rem;
+}
+.settings-grid {
+  grid-template-columns: 1fr 1fr;
+  column-gap: 0.8rem;
+}
+.settings-grid label,
+.password-settings-grid label,
+.settings-sensitive-field > label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #afbdd0;
+  font-size: 0.76rem;
+}
+.settings-grid input,
+.settings-grid select,
+.password-settings-grid > input,
+.settings-password-field input {
+  width: 100%;
+  height: 44px;
+  padding: 0 0.75rem;
+  border: 1px solid #29405f;
+  border-radius: 10px;
+  outline: none;
+  color: var(--text);
+  background: #07101d;
+}
+.settings-grid input:focus,
+.settings-grid select:focus,
+.password-settings-grid > input:focus,
+.settings-password-field:focus-within {
+  border-color: var(--blue);
+}
+.settings-grid label:nth-of-type(1),
+.settings-grid label:nth-of-type(2) {
+  grid-row: 1;
+}
+.settings-grid input:nth-of-type(1),
+.settings-grid input:nth-of-type(2) {
+  grid-row: 2;
+}
+.settings-grid label:nth-of-type(3),
+.settings-grid select {
+  grid-column: 1 / -1;
+}
+.settings-sensitive-field {
+  margin-top: 0.85rem;
+}
+.settings-password-field {
+  position: relative;
+}
+.settings-password-field input {
+  padding-right: 2.8rem;
+}
+.settings-password-field button {
+  position: absolute;
+  top: 50%;
+  right: 0.45rem;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+.settings-password-field button:hover {
+  color: var(--text);
+  background: #122139;
+}
+.privacy-note {
+  margin: 0.85rem 0 0;
+  color: #73859e;
+  font-size: 0.71rem;
+  line-height: 1.5;
+}
+.password-settings-grid {
+  grid-template-columns: 1fr 1fr;
+  column-gap: 0.8rem;
+}
+.password-settings-grid label:first-child,
+.password-settings-grid .settings-password-field:first-of-type {
+  grid-column: 1 / -1;
+}
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+.account-settings .primary-button.compact {
+  width: auto;
+  min-width: 170px;
+}
+@media (max-width: 560px) {
+  .settings-grid,
+  .password-settings-grid {
+    display: flex;
+    flex-direction: column;
+  }
+  .account-photo-row {
+    flex-wrap: wrap;
+  }
+  .account-photo-row > div {
+    min-width: 120px;
+  }
 }
 .group-details-form {
   margin-bottom: 1.35rem;

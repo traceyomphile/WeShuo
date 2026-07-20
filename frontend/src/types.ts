@@ -1,6 +1,9 @@
 export interface AuthUser {
   id: number
   username: string
+  date_of_birth?: string | null
+  profile_media_id?: number | null
+  time_format?: '12' | '24'
   created_at?: string
   last_seen?: string | null
 }
@@ -46,7 +49,7 @@ export interface MessageReceipt {
 }
 
 export type ChatTarget =
-  | { kind: 'direct'; id: number; name: string; online: boolean; lastSeen?: string | null }
+  | { kind: 'direct'; id: number; name: string; online: boolean; lastSeen?: string | null; profileMediaId?: number | null }
   | {
       kind: 'group'
       id: number

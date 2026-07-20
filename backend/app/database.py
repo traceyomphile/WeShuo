@@ -38,6 +38,9 @@ def initialise_database() -> None:
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL UNIQUE COLLATE NOCASE,
         password_hash TEXT NOT NULL,
+        date_of_birth TEXT,
+        profile_media_id INTEGER REFERENCES media(id),
+        time_format TEXT NOT NULL DEFAULT '12',
         created_at TEXT NOT NULL,
         last_seen TEXT
     );
@@ -95,6 +98,15 @@ def initialise_database() -> None:
             connection.execute("ALTER TABLE messages ADD COLUMN delivered_at TEXT")
         if "seen_at" not in message_columns:
             connection.execute("ALTER TABLE messages ADD COLUMN seen_at TEXT")
+        user_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()
+        }
+        if "date_of_birth" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN date_of_birth TEXT")
+        if "profile_media_id" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN profile_media_id INTEGER REFERENCES media(id)")
+        if "time_format" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN time_format TEXT NOT NULL DEFAULT '12'")
         group_columns = {
             row["name"] for row in connection.execute("PRAGMA table_info(groups)").fetchall()
         }
