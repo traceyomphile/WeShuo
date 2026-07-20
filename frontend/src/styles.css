@@ -819,15 +819,33 @@ i.online {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.message-bubble time {
-  display: block;
+.message-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.22rem;
   margin-top: 0.3rem;
+}
+.message-meta time {
   color: #7587a0;
   font-size: 0.57rem;
-  text-align: right;
 }
-.mine .message-bubble time {
+.mine .message-meta time {
   color: #b3c2eb;
+}
+.message-ticks {
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  color: #b3c2eb;
+  line-height: 1;
+}
+.message-ticks.seen {
+  color: #57c7ff;
+  filter: drop-shadow(0 0 4px rgba(87, 199, 255, 0.3));
+}
+.message-ticks svg {
+  display: block;
 }
 .attachment {
   width: 230px;

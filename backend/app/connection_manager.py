@@ -21,15 +21,18 @@ class ConnectionManager:
                 if not connections:
                     self._connections.pop(user_id, None)
 
-    async def send(self, user_id: int, payload: dict) -> None:
+    async def send(self, user_id: int, payload: dict) -> bool:
         dead = []
+        delivered = False
         for websocket in list(self._connections.get(user_id, set())):
             try:
                 await websocket.send_json(payload)
+                delivered = True
             except Exception:
                 dead.append(websocket)
         for websocket in dead:
             await self.disconnect(user_id, websocket)
+        return delivered
 
     def is_online(self, user_id: int) -> bool:
         return bool(self._connections.get(user_id))

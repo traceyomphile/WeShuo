@@ -26,6 +26,13 @@ export interface Message {
   media_id: number | null
   is_system: boolean
   created_at: string
+  delivery_status: 'sent' | 'delivered' | 'seen'
+}
+
+export interface MessageReceipt {
+  peer: string
+  up_to_id: number
+  status: 'delivered' | 'seen'
 }
 
 export type ChatTarget =

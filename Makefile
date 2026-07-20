@@ -57,13 +57,13 @@ install-frontend:
 backend:
 	$(PY) -m uvicorn app.main:app \
 		--reload \
-		--host 127.0.0.1 \
+		--host 0.0.0.0 \
 		--port 8000 \
 		--app-dir $(BACKEND_DIR)
 
 # Run frontend at http://localhost:5173
 frontend:
-	cd $(FRONTEND_DIR) && $(NPM) run dev
+	cd $(FRONTEND_DIR) && $(NPM) run dev -- --host 0.0.0.0
 
 # Run both processes in parallel.
 # Ctrl+C stops the Make job and both child processes.

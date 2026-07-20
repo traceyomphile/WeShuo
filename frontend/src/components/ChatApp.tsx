@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SubmitEvent } from 'react'
 import {
-  ArrowDownToLine, ArrowLeft, Hash, LogOut, Menu, MessageCircleMore,
+  ArrowDownToLine, ArrowLeft, Check, CheckCheck, Hash, LogOut, Menu, MessageCircleMore,
   Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Smile, Square, UsersRound, Video, X,
 } from 'lucide-react'
 import { api, socketUrl } from '../api'
 import { errorMessage } from '../utils/errors'
 import { useWebRTC } from '../hooks/useWebRTC'
-import type { AuthUser, ChatTarget, Group, Message, SocketEvent, User } from '../types'
+import type { AuthUser, ChatTarget, Group, Message, MessageReceipt, SocketEvent, User } from '../types'
 import CallOverlay from './CallOverlay'
 
 interface Props { token: string; currentUser: AuthUser; onLogout: () => void }
@@ -15,6 +15,7 @@ interface Props { token: string; currentUser: AuthUser; onLogout: () => void }
 function avatar(name: string) { return name.slice(0, 2).toUpperCase() }
 function chatKey(chat: ChatTarget) { return `${chat.kind}:${chat.id}` }
 const VOICE_NOTE_CONTENT = '🎤 Voice note'
+const RECEIPT_RANK = { sent: 0, delivered: 1, seen: 2 } as const
 function displayTime(value: string) {
   const date = new Date(value)
   return Number.isNaN(date.valueOf()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -51,6 +52,16 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
 
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { usersRef.current = users }, [users])
+  useEffect(() => {
+    const markVisibleConversationSeen = () => {
+      const chat = selectedRef.current
+      if (document.visibilityState === 'visible' && chat?.kind === 'direct') {
+        void api.markDirectSeen(token, chat.name).catch(() => {})
+      }
+    }
+    document.addEventListener('visibilitychange', markVisibleConversationSeen)
+    return () => document.removeEventListener('visibilitychange', markVisibleConversationSeen)
+  }, [token])
   useEffect(() => () => {
     if (recordingTimerRef.current !== null) window.clearInterval(recordingTimerRef.current)
     const recorder = mediaRecorderRef.current
@@ -118,6 +129,19 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
           signalHandler.current(event)
           return
         }
+        if (event.type === 'message_receipt') {
+          const receipt = event.data as MessageReceipt
+          setMessages(previous => previous.map(message => (
+            message.group_id === null &&
+            message.sender === currentUser.username &&
+            message.recipient === receipt.peer &&
+            message.id <= receipt.up_to_id &&
+            RECEIPT_RANK[receipt.status] > RECEIPT_RANK[message.delivery_status ?? 'sent']
+              ? { ...message, delivery_status: receipt.status }
+              : message
+          )))
+          return
+        }
         if (event.type !== 'message') return
         const message = event.data as Message
         const active = selectedRef.current
@@ -125,7 +149,14 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
           (active.kind === 'group' && message.group_id === active.id) ||
           (active.kind === 'direct' && message.group_id === null && (message.sender === active.name || message.recipient === active.name))
         )
-        if (matches) setMessages(previous => previous.some(item => item.id === message.id) ? previous : [...previous, message])
+        if (matches) {
+          setMessages(previous => previous.some(item => item.id === message.id) ? previous : [...previous, message])
+          if (
+            document.visibilityState === 'visible' &&
+            active.kind === 'direct' &&
+            message.sender === active.name
+          ) void api.markDirectSeen(token, active.name).catch(() => {})
+        }
         else {
           const sender = usersRef.current.find(item => item.username === message.sender)
           const key = message.group_id ? `group:${message.group_id}` : `direct:${sender?.id ?? message.sender}`
@@ -139,6 +170,7 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
 
   async function selectChat(chat: ChatTarget) {
     cancelVoiceRecording()
+    selectedRef.current = chat
     setSelected(chat)
     setShowMobileSidebar(false)
     setUnread(previous => ({ ...previous, [chatKey(chat)]: 0 }))
@@ -146,6 +178,9 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
     try {
       const history = chat.kind === 'direct' ? await api.directHistory(token, chat.name) : await api.groupHistory(token, chat.id)
       setMessages(history)
+      if (chat.kind === 'direct' && document.visibilityState === 'visible') {
+        void api.markDirectSeen(token, chat.name).catch(() => {})
+      }
     } catch (error) { setToast(errorMessage(error)); setMessages([]) }
     finally { setLoadingChat(false) }
   }
@@ -352,7 +387,10 @@ export default function ChatApp({ token, currentUser, onLogout }: Props) {
                   {message.media_id && message.content === VOICE_NOTE_CONTENT
                     ? <VoiceNotePlayer token={token} mediaId={message.media_id} onError={setToast} />
                     : <>{message.content && <p>{message.content}</p>}{message.media_id && <button className="attachment" onClick={() => downloadAttachment(message.media_id!)}><ArrowDownToLine size={18} /><span><strong>Attachment</strong><small>Click to download</small></span></button>}</>}
-                  <time>{displayTime(message.created_at)}</time>
+                  <div className="message-meta">
+                    <time>{displayTime(message.created_at)}</time>
+                    {mine && <MessageTicks status={selected.kind === 'direct' ? message.delivery_status ?? 'sent' : 'sent'} />}
+                  </div>
                 </div></div>
               </article>
             })}
@@ -431,4 +469,11 @@ function VoiceNotePlayer({ token, mediaId, onError }: { token: string; mediaId: 
   }, [mediaId, onError, token])
 
   return <div className="voice-note"><Mic size={18} />{source ? <audio controls preload="metadata" src={source} /> : <span>Loading voice note…</span>}</div>
+}
+
+function MessageTicks({ status }: { status: Message['delivery_status'] }) {
+  const label = status === 'seen' ? 'Seen' : status === 'delivered' ? 'Delivered' : 'Sent'
+  return <span className={`message-ticks ${status}`} aria-label={label} title={label}>
+    {status === 'sent' ? <Check size={14} /> : <CheckCheck size={15} />}
+  </span>
 }

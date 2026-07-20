@@ -43,6 +43,9 @@ export const api = {
     method: 'POST', body: JSON.stringify({ name, members }),
   }, token),
   directHistory: (token: string, username: string) => request<Message[]>(`/api/messages/direct/${encodeURIComponent(username)}`, {}, token),
+  markDirectSeen: (token: string, username: string) => request<{ up_to_id: number | null; status: 'seen' }>(`/api/messages/direct/${encodeURIComponent(username)}/seen`, {
+    method: 'POST',
+  }, token),
   groupHistory: (token: string, groupId: number) => request<Message[]>(`/api/groups/${groupId}/messages`, {}, token),
   sendDirect: (token: string, recipient: string, content: string, mediaId?: number) => request<Message>('/api/messages/direct', {
     method: 'POST', body: JSON.stringify({ recipient, content, media_id: mediaId }),

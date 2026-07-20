@@ -83,4 +83,11 @@ def initialise_database() -> None:
     """
     with write_lock, database() as connection:
         connection.executescript(schema)
+        message_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(messages)").fetchall()
+        }
+        if "delivered_at" not in message_columns:
+            connection.execute("ALTER TABLE messages ADD COLUMN delivered_at TEXT")
+        if "seen_at" not in message_columns:
+            connection.execute("ALTER TABLE messages ADD COLUMN seen_at TEXT")
         connection.commit()

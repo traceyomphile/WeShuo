@@ -48,12 +48,16 @@ def message_dict(row) -> dict:
         "group_id": row["group_id"], "content": row["content"],
         "media_id": row["media_id"], "is_system": bool(row["is_system"]),
         "created_at": row["created_at"],
+        "delivery_status": (
+            "seen" if row["seen_at"] else "delivered" if row["delivered_at"] else "sent"
+        ),
     }
 
 
 MESSAGE_SELECT = """
 SELECT m.id, sender.username AS sender, recipient.username AS recipient,
-       m.group_id, m.content, m.media_id, m.is_system, m.created_at
+       m.group_id, m.content, m.media_id, m.is_system, m.created_at,
+       m.delivered_at, m.seen_at
 FROM messages m
 JOIN users sender ON sender.id=m.sender_id
 LEFT JOIN users recipient ON recipient.id=m.recipient_id
@@ -159,8 +163,56 @@ async def send_direct(body: DirectMessageCreate, user=Depends(get_current_user))
         connection.commit()
         row = connection.execute(MESSAGE_SELECT + " WHERE m.id=?", (cursor.lastrowid,)).fetchone()
     message = message_dict(row)
-    await manager.send(recipient["id"], {"type": "message", "data": message})
+    delivered = await manager.send(recipient["id"], {"type": "message", "data": message})
+    if delivered:
+        with write_lock, database() as connection:
+            connection.execute(
+                "UPDATE messages SET delivered_at=COALESCE(delivered_at, ?) WHERE id=?",
+                (utc_now(), message["id"]),
+            )
+            connection.commit()
+        message["delivery_status"] = "delivered"
+        await manager.send(user["id"], {
+            "type": "message_receipt",
+            "data": {
+                "peer": recipient["username"],
+                "up_to_id": message["id"],
+                "status": "delivered",
+            },
+        })
     return message
+
+
+@app.post("/api/messages/direct/{username}/seen")
+async def mark_direct_seen(username: str, user=Depends(get_current_user)):
+    seen_at = utc_now()
+    with write_lock, database() as connection:
+        peer = user_by_username(connection, username)
+        if peer is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        latest = connection.execute(
+            """SELECT MAX(id) latest_id FROM messages
+               WHERE group_id IS NULL AND sender_id=? AND recipient_id=?""",
+            (peer["id"], user["id"]),
+        ).fetchone()["latest_id"]
+        if latest is not None:
+            connection.execute(
+                """UPDATE messages
+                   SET delivered_at=COALESCE(delivered_at, ?), seen_at=COALESCE(seen_at, ?)
+                   WHERE group_id IS NULL AND sender_id=? AND recipient_id=? AND id<=?""",
+                (seen_at, seen_at, peer["id"], user["id"], latest),
+            )
+            connection.commit()
+    if latest is not None:
+        await manager.send(peer["id"], {
+            "type": "message_receipt",
+            "data": {
+                "peer": user["username"],
+                "up_to_id": latest,
+                "status": "seen",
+            },
+        })
+    return {"up_to_id": latest, "status": "seen"}
 
 
 @app.get("/api/groups")
@@ -302,6 +354,29 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
     await manager.connect(user_id, websocket)
     try:
         await manager.send(user_id, {"type": "connected", "data": {"username": payload["username"]}})
+        delivered_at = utc_now()
+        with write_lock, database() as connection:
+            pending = connection.execute(
+                """SELECT sender_id, MAX(id) up_to_id FROM messages
+                   WHERE group_id IS NULL AND recipient_id=? AND delivered_at IS NULL
+                   GROUP BY sender_id""",
+                (user_id,),
+            ).fetchall()
+            connection.execute(
+                """UPDATE messages SET delivered_at=?
+                   WHERE group_id IS NULL AND recipient_id=? AND delivered_at IS NULL""",
+                (delivered_at, user_id),
+            )
+            connection.commit()
+        for receipt in pending:
+            await manager.send(receipt["sender_id"], {
+                "type": "message_receipt",
+                "data": {
+                    "peer": payload["username"],
+                    "up_to_id": receipt["up_to_id"],
+                    "status": "delivered",
+                },
+            })
         while True:
             event = await websocket.receive_json()
             event_type = event.get("type")
